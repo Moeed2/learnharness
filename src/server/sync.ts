@@ -170,8 +170,12 @@ export async function syncGoogleCallbackResponse(request: Request): Promise<Resp
 	catch { result = { ok: false, status: 400, message: "Google sign-in could not complete. Start sign-in again from LearnHarness." }; }
 	if (result.ok) { const state = runtime(); state.engine = undefined; state.lastKick = 0; }
 	const heading = result.ok ? "Google sign-in complete \u2014 return to LearnHarness" : "Google sign-in not completed";
-	const back = isAndroidServer(process.env) ? `<p><a href="learnharness://auth-done?status=${result.ok ? "ok" : "error"}">Return to LearnHarness</a></p>` : "";
-	const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="referrer" content="no-referrer"><title>LearnHarness</title><style>body{font:18px/1.5 system-ui,sans-serif;margin:0;padding:48px 24px;text-align:center}</style></head><body><h1>${escapeHtml(heading)}</h1><p>${escapeHtml(result.ok ? "You can close this tab." : result.message)}</p>${back}</body></html>`;
+	// Android: the system browser does not return to the app on its own, so hand control back through the
+	// app's existing deep link (same as the ChatGPT callback page), with a button as a fallback.
+	const android = isAndroidServer(process.env);
+	const link = `learnharness://auth-done?status=${result.ok ? "ok" : "error"}`;
+	const back = android ? `<p><a href="${link}">Return to LearnHarness</a></p>` : "";
+	const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="referrer" content="no-referrer">${android ? `<meta http-equiv="refresh" content="0;url=${link}">` : ""}<title>LearnHarness</title><style>body{font:18px/1.5 system-ui,sans-serif;margin:0;padding:48px 24px;text-align:center}</style></head><body><h1>${escapeHtml(heading)}</h1><p>${escapeHtml(result.ok ? "You can close this tab." : result.message)}</p>${back}</body></html>`;
 	return new Response(html, { status: result.status, headers: PAGE_HEADERS });
 }
 
