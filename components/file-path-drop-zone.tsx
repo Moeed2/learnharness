@@ -1,10 +1,12 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { FileSymlinkIcon, XIcon } from "lucide-react";
+import { FileSymlinkIcon, PaperclipIcon, XIcon } from "lucide-react";
 import { quoteFilePath } from "@/src/core";
 import { appendToPrimaryInput } from "@/components/dictation";
 import { INSERT_FILE_PATHS_EVENT } from "@/components/path-input";
+import { isAndroidApp } from "@/lib/platform";
+import { androidFilesBridge, describeProgress, onImportProgress, summarizePick } from "@/lib/android-files";
 
 const BROWSER_NOTICE = "Local file paths can only be attached in the desktop app. You can paste a full path instead.";
 
@@ -15,6 +17,27 @@ export function FilePathDropZone({ children, className }: { children: React.Reac
 	const depth = useRef(0);
 	const [dragging, setDragging] = useState(false);
 	const [notice, setNotice] = useState("");
+	const [android, setAndroid] = useState(false);
+	const [copying, setCopying] = useState("");
+	useEffect(() => setAndroid(isAndroidApp() && !!androidFilesBridge()), []); // post-mount: no hydration mismatch
+	/** Android: no drag source or OS paths, so the native picker copies the
+	 * chosen files into app storage and hands back real paths for chips. */
+	const chooseFiles = async () => {
+		const bridge = androidFilesBridge();
+		if (!bridge || copying) return;
+		setNotice("");
+		setCopying("Copying…");
+		const off = onImportProgress((progress) => setCopying(describeProgress(progress)));
+		try {
+			const { paths, notice: pickNotice } = summarizePick(await bridge.pickFiles());
+			if (paths.length === 0) { setNotice(pickNotice); return; }
+			const focused = document.activeElement?.closest<HTMLElement>("[data-file-path-input]");
+			if (focused && root.current?.contains(focused)) focused.dispatchEvent(new CustomEvent(INSERT_FILE_PATHS_EVENT, { detail: paths }));
+			else if (!appendToPrimaryInput(paths.map(quoteFilePath).join(" "))) { setNotice("Open a chat to attach file paths."); return; }
+			setNotice(pickNotice);
+		} catch { setNotice("Could not read the chosen files."); }
+		finally { off(); setCopying(""); }
+	};
 	const hasFiles = (event: React.DragEvent) => Array.from(event.dataTransfer.types).includes("Files");
 	const clearDrag = () => { depth.current = 0; setDragging(false); };
 	useEffect(() => {
@@ -96,6 +119,12 @@ export function FilePathDropZone({ children, className }: { children: React.Reac
 						<span className="font-ui text-sm">{window.lh?.getPathForFile ? "Drop to attach file paths" : BROWSER_NOTICE}</span>
 					</div>
 				</div>
+			)}
+			{android && (
+				<button type="button" data-testid="choose-files" onClick={() => void chooseFiles()} disabled={!!copying}
+					className="absolute bottom-3 left-3 z-40 flex h-9 items-center gap-1.5 rounded-full border bg-card/90 px-3 font-ui text-xs shadow-sm backdrop-blur hover:bg-accent disabled:opacity-70">
+					<PaperclipIcon className="size-3.5" aria-hidden />{copying || "Choose files"}
+				</button>
 			)}
 			{notice && <div role="status" className="absolute bottom-2 left-1/2 z-50 flex max-w-[90%] -translate-x-1/2 items-center gap-2 rounded-md border bg-card px-3 py-2 font-ui text-xs shadow-sm">
 				<span>{notice}</span>

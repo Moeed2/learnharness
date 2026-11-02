@@ -49,6 +49,7 @@ class MainActivity : Activity() {
     private lateinit var primaryButton: Button
     private lateinit var secondaryButton: Button
     private var webView: WebView? = null
+    private var features: LhFeatures? = null // step 6: files, links, downloads, mic (LhFeatures.kt)
 
     private var screen = Screen.LOADING
     private var primaryAction: () -> Unit = {}
@@ -169,6 +170,7 @@ class MainActivity : Activity() {
         s.mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
         s.userAgentString = s.userAgentString + " ${AppConfig.UA_TOKEN}/${BuildConfig.VERSION_NAME}"
         WebView.setWebContentsDebuggingEnabled(BuildConfig.DEBUG)
+        features = LhFeatures(this, wv)
 
         wv.webViewClient = object : WebViewClient() {
             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
@@ -176,15 +178,19 @@ class MainActivity : Activity() {
                 val sameOrigin = uri.scheme == "http" && uri.host == "127.0.0.1" && uri.port == ServerState.port
                 if (sameOrigin) return false
                 // Anything else (docs, sign-in pages) opens in the system browser.
-                try {
-                    startActivity(Intent(Intent.ACTION_VIEW, uri).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-                } catch (t: Exception) {
-                    Log.w(AppConfig.TAG, "no handler for $uri", t)
-                }
+                features?.openExternal(uri)
                 return true
             }
 
+            override fun onPageStarted(view: WebView, url: String?, favicon: android.graphics.Bitmap?) {
+                features?.onPageStarted(url)
+            }
+
+            override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest) =
+                features?.shouldInterceptRequest(request)
+
             override fun onPageFinished(view: WebView, url: String) {
+                features?.onPageFinished(url)
                 if (url.startsWith(origin)) {
                     webLoaded = true
                     Log.i(AppConfig.TAG, "LH_WEBVIEW_LOADED $url")
@@ -226,6 +232,15 @@ class MainActivity : Activity() {
         }
     }
 
+    @Suppress("OVERRIDE_DEPRECATION")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        if (features?.onActivityResult(requestCode, resultCode, data) != true) super.onActivityResult(requestCode, resultCode, data)
+    }
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        if (features?.onRequestPermissionsResult(requestCode, grantResults) != true) super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+    }
+
     override fun onPause() {
         RenderHost.detach(window.decorView as ViewGroup)
         webView?.onPause()
@@ -235,6 +250,7 @@ class MainActivity : Activity() {
     override fun onDestroy() {
         polling = false
         pollThread?.interrupt()
+        features?.destroy()
         webView?.let { (it.parent as? ViewGroup)?.removeView(it); it.destroy() }
         super.onDestroy()
     }
