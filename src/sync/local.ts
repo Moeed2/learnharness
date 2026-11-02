@@ -55,8 +55,10 @@ export function safePath(root: string, relative: string): string {
   const base = path.resolve(root),
     target = path.resolve(base, relative);
   if (!target.startsWith(base + path.sep)) throw Error("Unsafe path");
-  let current = path.parse(target).root;
-  for (const part of target.slice(current.length).split(path.sep)) {
+  // Only folders inside the root are checked: the OS may link folders above it
+  // (Android maps /data/user/0 to /data/data), and those are not ours to refuse.
+  let current = base;
+  for (const part of target.slice(base.length + 1).split(path.sep)) {
     current = path.join(current, part);
     if (fs.existsSync(current) && fs.lstatSync(current).isSymbolicLink())
       throw Error("Symlink refused");
