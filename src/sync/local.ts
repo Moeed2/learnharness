@@ -258,12 +258,37 @@ export function clean(
   }
   return data;
 }
-export function capture(
+const WALKED_DIRS = [
+  "chats",
+  "graph",
+  "jobs",
+  "documents",
+  "prompts",
+  "documents/blobs",
+  "documents/records",
+  "prompts/shared",
+  "prompts/teacher",
+  "prompts/prober",
+  "prompts/practice",
+];
+/** Files modified this recently are never served from a cache or trusted by stamp. */
+const HOT_MS = 2000;
+function statStamp(stat: fs.Stats): string {
+  return [stat.dev, stat.ino, stat.size, stat.mtimeMs, stat.ctimeMs].join(":");
+}
+const isHot = (stat: fs.Stats, now: number) =>
+  Math.abs(now - stat.mtimeMs) < HOT_MS;
+/** Process-local: absolute file path to the cleaned content of an unchanged file. */
+const captured = new Map<
+  string,
+  { stamp: string; data: string | null; bytes: number }
+>();
+/** Walk the allowlisted tree (refusing symlinks) and visit each synced file. */
+function walkFiles(
   root: string,
-  options: { includeBlobs?: boolean } = {},
-): Record<string, Record<string, string>> {
-  const out: Record<string, Record<string, string>> = {};
-  const sizes: Record<string, number> = {};
+  options: { includeBlobs?: boolean },
+  visit: (p: string, unit: string, file: string) => void,
+): void {
   function walk(rel: string) {
     const dir = rel ? safePath(root, rel) : path.resolve(root);
     if (!fs.existsSync(dir)) return;
@@ -271,56 +296,79 @@ export function capture(
       const p = rel ? rel + "/" + entry.name : entry.name;
       const unit = unitFor(p);
       if (entry.isSymbolicLink()) {
-        if (
-          unit ||
-          [
-            "chats",
-            "graph",
-            "jobs",
-            "documents",
-            "prompts",
-            "documents/blobs",
-            "documents/records",
-            "prompts/shared",
-            "prompts/teacher",
-            "prompts/prober",
-            "prompts/practice",
-          ].includes(p)
-        )
-          throw Error("Symlink refused");
+        if (unit || WALKED_DIRS.includes(p)) throw Error("Symlink refused");
         continue;
       }
       if (entry.isDirectory()) {
         if (p === "documents/blobs" && options.includeBlobs === false) continue;
-        if (
-          [
-            "chats",
-            "graph",
-            "jobs",
-            "documents",
-            "prompts",
-            "documents/blobs",
-            "documents/records",
-            "prompts/shared",
-            "prompts/teacher",
-            "prompts/prober",
-            "prompts/practice",
-          ].includes(p)
-        )
-          walk(p);
+        if (WALKED_DIRS.includes(p)) walk(p);
         continue;
       }
       if (!unit || unit.startsWith("documents/blobs/")) continue;
-      const file = safePath(root, p);
-      if (fs.statSync(file).size > MAX_BYTES) throw Error("Content too large");
-      const data = clean(p, fs.readFileSync(file));
-      if (!data) continue;
-      sizes[unit] = (sizes[unit] ?? 0) + data.length;
-      if (sizes[unit]! > MAX_BYTES) throw Error("Unit too large");
-      (out[unit] ??= {})[p] = data.toString("base64");
+      visit(p, unit, safePath(root, p));
     }
   }
   walk("");
+}
+function pruneCaptured(root: string, seen: Set<string>): void {
+  const prefix = path.resolve(root) + path.sep;
+  for (const key of captured.keys())
+    if (key.startsWith(prefix) && !seen.has(key)) captured.delete(key);
+}
+/**
+ * Stat-only change detector over the same files capture() reads. When `hot`
+ * is set a file was modified within the last two seconds, so equal stamps
+ * prove nothing and callers must compare content.
+ */
+export function fingerprint(
+  root: string,
+  options: { now?: () => number } = {},
+): { hash: string; hot: boolean } {
+  const now = (options.now ?? Date.now)();
+  const entries: [string, string][] = [];
+  let hot = false;
+  walkFiles(root, { includeBlobs: false }, (p, _unit, file) => {
+    const stat = fs.statSync(file);
+    if (isHot(stat, now)) hot = true;
+    entries.push([p, statStamp(stat)]);
+  });
+  entries.sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
+  return { hash: digest(JSON.stringify(entries)), hot };
+}
+export function capture(
+  root: string,
+  options: { includeBlobs?: boolean; now?: () => number } = {},
+): Record<string, Record<string, string>> {
+  const out: Record<string, Record<string, string>> = {};
+  const sizes: Record<string, number> = {};
+  const seen = new Set<string>();
+  const now = (options.now ?? Date.now)();
+  walkFiles(root, options, (p, unit, file) => {
+    const before = fs.statSync(file);
+    if (before.size > MAX_BYTES) throw Error("Content too large");
+    seen.add(file);
+    const stamp = statStamp(before),
+      hit = captured.get(file);
+    let entry: { data: string | null; bytes: number };
+    if (hit && hit.stamp === stamp && !isHot(before, now)) {
+      entry = hit;
+    } else {
+      captured.delete(file);
+      const data = clean(p, fs.readFileSync(file));
+      entry = {
+        data: data ? data.toString("base64") : null,
+        bytes: data?.length ?? 0,
+      };
+      // Cache only a file that was quiet and unchanged across the read.
+      if (!isHot(before, now) && statStamp(fs.statSync(file)) === stamp)
+        captured.set(file, { stamp, ...entry });
+    }
+    if (entry.data === null) return;
+    sizes[unit] = (sizes[unit] ?? 0) + entry.bytes;
+    if (sizes[unit]! > MAX_BYTES) throw Error("Unit too large");
+    (out[unit] ??= {})[p] = entry.data;
+  });
+  pruneCaptured(root, seen);
   if (options.includeBlobs === false) return out;
   const refs = new Set(
     Object.values(out).flatMap((files) => blobReferences(files)),

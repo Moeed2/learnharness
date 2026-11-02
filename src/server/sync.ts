@@ -3,6 +3,7 @@ import path from "node:path";
 import { PATHS } from "../../config.ts";
 import { emit, subscribe } from "../core/events.ts";
 import { SyncEngine } from "../sync/engine.ts";
+import type { SyncReason } from "../sync/types.ts";
 import { GoogleDriveRemote } from "../sync/google-drive.ts";
 import { bindAccountToken } from "../sync/account-token.ts";
 import { getGoogleSyncAuthStatus, configureGoogleSyncRelay, configureGoogleSyncClient, beginGoogleSyncSignIn, completeGoogleSyncCallback, completeGoogleSyncSignIn, disconnectGoogleSync, getGoogleDriveAccessToken, GOOGLE_CALLBACK_PATH } from "../sync/google-auth.ts";
@@ -66,7 +67,7 @@ function engine(): SyncEngine | undefined {
 	return state.engine;
 }
 
-async function runSync(): Promise<void> {
+async function runSync(reason: SyncReason = "manual"): Promise<void> {
 	const state = runtime();
 	if (state.running) return state.running;
 	const current = engine();
@@ -75,7 +76,7 @@ async function runSync(): Promise<void> {
 	state.phase = "syncing"; delete state.error; state.lastKick = Date.now();
 	state.running = (async () => {
 		try {
-			const result = await current.sync();
+			const result = await current.sync({ reason });
 			if (generation !== state.generation) return;
 			state.phase = result.deferred ? "deferred" : "idle";
 			if (!result.deferred) state.lastSyncedAt = new Date().toISOString();
@@ -92,16 +93,16 @@ async function runSync(): Promise<void> {
 function ensureBackground(): void {
 	const state = runtime();
 	if (!state.timer) {
-		state.timer = setInterval(() => { void runSync().catch(() => {}); }, 30_000);
+		state.timer = setInterval(() => { void runSync("timer").catch(() => {}); }, 30_000);
 		state.timer.unref?.();
 	}
 	if (!state.subscribed) {
 		state.subscribed = true;
 		subscribe(() => {
-			if (Date.now() - state.lastKick > 5_000) void runSync().catch(() => {});
+			if (Date.now() - state.lastKick > 5_000) void runSync("event").catch(() => {});
 		});
 	}
-	if (!state.running && Date.now() - state.lastKick > 30_000) void runSync().catch(() => {});
+	if (!state.running && Date.now() - state.lastKick > 30_000) void runSync("event").catch(() => {});
 }
 
 export function syncStatus(): Record<string, unknown> {
@@ -133,7 +134,7 @@ export async function syncResponse(request: Request): Promise<Response> {
 				if (complete) { runtime().engine = undefined; runtime().lastKick = 0; }
 				return json(syncStatus());
 			}
-			case "sync": await runSync(); return json(syncStatus());
+			case "sync": await runSync("foreground"); return json(syncStatus());
 			case "disconnect": {
 				const state = runtime(); state.generation++; state.engine = undefined; state.phase = "disconnected"; delete state.error;
 				await disconnectGoogleSync(); return json(syncStatus());

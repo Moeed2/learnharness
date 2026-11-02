@@ -206,3 +206,33 @@ test("newer learning data asks for an app update without exposing storage paths"
  await mount(); assert.match(host!.textContent!, /Update the learning app/);
  assert.doesNotMatch(host!.textContent!, /chat_a.json/);
 });
+
+test("returning to the app triggers a real sync at most once every twenty seconds", async () => {
+ const realNow = Date.now; let now = 1_000_000; Date.now = () => now;
+ const posts: string[] = []; let gets = 0;
+ globalThis.fetch = async (input, init) => {
+  if (String(input) === "/api/documents") return Response.json({ documents: [] });
+  if (init?.method === "POST") { posts.push(JSON.parse(init.body as string).action); return Response.json({}); }
+  gets++; return Response.json(status);
+ };
+ try {
+  Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" });
+  await mount();
+  await act(async () => window.dispatchEvent(new window.Event("focus")));
+  assert.deepEqual(posts, [], "the start-up read counts as the latest foreground sync");
+  now += 20_000;
+  await act(async () => window.dispatchEvent(new window.Event("focus")));
+  assert.deepEqual(posts, ["sync"]);
+  now += 5_000;
+  const before = gets;
+  await act(async () => { document.dispatchEvent(new window.Event("visibilitychange")); window.dispatchEvent(new window.Event("online")); });
+  assert.deepEqual(posts, ["sync"]); assert(gets > before, "throttled triggers still read status");
+  now += 20_000;
+  await act(async () => document.dispatchEvent(new window.Event("visibilitychange")));
+  assert.deepEqual(posts, ["sync", "sync"]);
+  now += 20_000;
+  Object.defineProperty(document, "visibilityState", { configurable: true, value: "hidden" });
+  await act(async () => document.dispatchEvent(new window.Event("visibilitychange")));
+  assert.equal(posts.length, 2);
+ } finally { Date.now = realNow; Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" }); }
+});

@@ -118,6 +118,8 @@ export function SyncCoordinator({ children }: { children: ReactNode }) {
  const baseline = useRef<string | undefined>(undefined);
  const controller = useRef<AbortController | null>(null);
  const mounted = useRef(false);
+ const latestStatus = useRef<SyncStatus | null>(null);
+ const lastForegroundSync = useRef(0);
  const run = useCallback(async (action?: SyncAction, value?: string | { clientId: string; clientSecret: string }): Promise<{ url?: string } | null> => {
   if (!mounted.current || controller.current) return null;
   const request = new AbortController(); controller.current = request;
@@ -142,7 +144,7 @@ export function SyncCoordinator({ children }: { children: ReactNode }) {
     if (baseline.current !== undefined && next.changedAt !== baseline.current) setRemoteChanges(true);
     baseline.current = next.changedAt;
    }
-   setStatus(next); setError(next.error ? safeSyncError(next.error) : null);
+   latestStatus.current = next; setStatus(next); setError(next.error ? safeSyncError(next.error) : null);
    if (action === "restore") setRemoteChanges(true);
    // Read remote state before capturing browser changes so stale localStorage cannot echo it back.
    try {
@@ -183,27 +185,38 @@ export function SyncCoordinator({ children }: { children: ReactNode }) {
  const refresh = useCallback(async () => { await run(); }, [run]);
  useEffect(() => {
   mounted.current = true;
+  // The first status read already makes the server sync, so count it as the latest foreground sync.
+  lastForegroundSync.current = Date.now();
   void refresh();
   const visibleRefresh = () => { if (document.visibilityState !== "hidden") void refresh(); };
+  // Coming back to the app asks the server for a real sync (at most every 20 s); other triggers only read status.
+  const foreground = () => {
+   if (document.visibilityState === "hidden") return;
+   const now = Date.now();
+   if (latestStatus.current?.connected && latestStatus.current.phase !== "syncing" && !controller.current && now - lastForegroundSync.current >= 20_000) {
+    lastForegroundSync.current = now;
+    void run("sync");
+   } else void refresh();
+  };
   const timer = window.setInterval(visibleRefresh, 15_000);
-  window.addEventListener("focus", visibleRefresh);
-  window.addEventListener("online", visibleRefresh);
+  window.addEventListener("focus", foreground);
+  window.addEventListener("online", foreground);
   window.addEventListener("storage", visibleRefresh);
   window.addEventListener("lh:keymap-changed", visibleRefresh);
   window.addEventListener("lh:settings-saved", visibleRefresh);
-  document.addEventListener("visibilitychange", visibleRefresh);
+  document.addEventListener("visibilitychange", foreground);
   return () => {
    mounted.current = false;
    controller.current?.abort(); controller.current = null;
    window.clearInterval(timer);
-   window.removeEventListener("focus", visibleRefresh);
-   window.removeEventListener("online", visibleRefresh);
+   window.removeEventListener("focus", foreground);
+   window.removeEventListener("online", foreground);
    window.removeEventListener("storage", visibleRefresh);
    window.removeEventListener("lh:keymap-changed", visibleRefresh);
    window.removeEventListener("lh:settings-saved", visibleRefresh);
-   document.removeEventListener("visibilitychange", visibleRefresh);
+   document.removeEventListener("visibilitychange", foreground);
   };
- }, [refresh]);
+ }, [refresh, run]);
  return <SyncContext.Provider value={{ status, busy, error: error ?? preferenceError, refresh, action: run }}>
   {children}
   {remoteChanges && <div role="status" className="fixed bottom-4 right-4 z-40 max-w-[calc(100vw-2rem)] rounded-sm border border-border bg-card px-3 py-2 text-xs shadow-md">

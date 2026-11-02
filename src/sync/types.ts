@@ -28,9 +28,13 @@ export interface SyncEngineOptions {
   now?: () => number;
   onApplied?: (paths: string[]) => void;
 }
+/** Why a sync started; only idle background reasons may be skipped. */
+export type SyncReason = "timer" | "event" | "foreground" | "manual";
 export interface SyncResult {
   uploaded: number;
   downloaded: number;
   conflicts: number;
   deferred: boolean;
+  /** True when nothing changed locally and the remote listing was fresh. */
+  skipped?: boolean;
 }

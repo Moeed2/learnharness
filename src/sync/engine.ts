@@ -5,6 +5,7 @@ import type {
   Revision,
   RevisionMeta,
   SyncEngineOptions,
+  SyncReason,
   SyncResult,
 } from "./types.ts";
 import {
@@ -12,6 +13,7 @@ import {
   atomicJSON,
   blobReferences,
   capture,
+  fingerprint as statFingerprint,
   localBlobHash,
   writeBlob,
   filesHash,
@@ -32,6 +34,8 @@ const GRACE = 30 * 24 * 3600 * 1000;
 const COMPACT_EVERY = 24 * 3600 * 1000;
 const MAX_DELETES = 500;
 const MAX_LISTED = 200_000;
+/** While idle, remote changes are looked for at most this often. */
+const IDLE_LIST_INTERVAL = 5 * 60 * 1000;
 /** Oldest first: by creation time (legacy = 0), id as a stable tiebreaker. */
 const byAge = (a: RevisionMeta, b: RevisionMeta) =>
   (a.at ?? 0) - (b.at ?? 0) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
@@ -47,17 +51,20 @@ interface State {
 }
 const flights = new Map<string, Promise<SyncResult>>();
 export class SyncEngine {
+  /** Stat fingerprint after the last fully successful run (memory only). */
+  private lastFingerprint?: string;
+  private lastListedAt?: number;
   constructor(private readonly options: SyncEngineOptions) {}
   /** Creation time, never earlier than the newest parent (clock-skew safe). */
   private stamp(parentAts: (number | undefined)[]): { at: number } {
     const floor = Math.max(0, ...parentAts.map((a) => a ?? 0)) + 1;
     return { at: Math.max((this.options.now ?? Date.now)(), floor) };
   }
-  sync(): Promise<SyncResult> {
+  sync(options: { reason?: SyncReason } = {}): Promise<SyncResult> {
     const key = path.resolve(this.options.root);
     const active = flights.get(key);
     if (active) return active;
-    const run = this.run().finally(() => {
+    const run = this.run(options.reason ?? "manual").finally(() => {
       flights.delete(key);
     });
     flights.set(key, run);
@@ -136,7 +143,7 @@ export class SyncEngine {
     atomicJSON(stateFile, state);
     o.onApplied?.(changed);
   }
-  private async run(): Promise<SyncResult> {
+  private async run(reason: SyncReason): Promise<SyncResult> {
     const o = this.options,
       result: SyncResult = {
         uploaded: 0,
@@ -161,23 +168,46 @@ export class SyncEngine {
       return result;
     }
     recover(o.root, o.stateDir, o.accountId);
-    const initial = capture(o.root, { includeBlobs: false }),
-      fingerprint = filesHash(
+    const clock = o.now ?? Date.now;
+    // Taken before capture so an edit in between shows up as a difference.
+    const stamps = statFingerprint(o.root, { now: clock });
+    const settled = this.lastFingerprint;
+    this.lastFingerprint = undefined;
+    if (
+      (reason === "timer" || reason === "event") &&
+      settled !== undefined &&
+      !stamps.hot &&
+      stamps.hash === settled &&
+      this.lastListedAt !== undefined &&
+      clock() - this.lastListedAt < IDLE_LIST_INTERVAL &&
+      !state.pending.length &&
+      !state.pendingBlob &&
+      !state.pendingMerge
+    ) {
+      this.lastFingerprint = settled;
+      result.skipped = true;
+      return result;
+    }
+    const initial = capture(o.root, { includeBlobs: false, now: clock });
+    const fullHash = (snapshot: Record<string, Record<string, string>>) =>
+      filesHash(
         Object.fromEntries(
-          Object.entries(initial).map(([u, f]) => [u, filesHash(f)]),
+          Object.entries(snapshot).map(([u, f]) => [u, filesHash(f)]),
         ),
       );
-    const unchanged = () =>
-      !o.isBusy?.() &&
-      fingerprint ===
-        filesHash(
-          Object.fromEntries(
-            Object.entries(capture(o.root, { includeBlobs: false })).map(
-              ([u, f]) => [u, filesHash(f)],
-            ),
-          ),
-        );
+    const fingerprint = fullHash(initial);
+    const unchanged = () => {
+      if (o.isBusy?.()) return false;
+      const now = statFingerprint(o.root, { now: clock });
+      if (!now.hot && !stamps.hot && now.hash === stamps.hash) return true;
+      // Stamps differ (or cannot be trusted): compare content.
+      return (
+        fingerprint ===
+        fullHash(capture(o.root, { includeBlobs: false, now: clock }))
+      );
+    };
     let listed = await o.remote.list();
+    const listedAt = clock();
     if (listed.length > MAX_LISTED) throw Error("Too many revisions");
     const metas = new Map<string, RevisionMeta>();
     for (const meta of listed) {
@@ -549,6 +579,11 @@ export class SyncEngine {
     state.pending = [];
     atomicJSON(stateFile, state);
     if (changed.length) o.onApplied?.(changed);
+    // Applied files changed the tree, so the next run must look at everything.
+    if (!result.deferred && !changed.length && !stamps.hot) {
+      this.lastFingerprint = stamps.hash;
+      this.lastListedAt = listedAt;
+    }
     await this.compact(state, stateFile, metas, cache, references);
     return result;
   }
