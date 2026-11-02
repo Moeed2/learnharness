@@ -126,6 +126,7 @@ if (fs.existsSync(path.join(img, "sharp-wasm32"))) {
 
 // ---- 4. diagnostics + version -----------------------------------------------------
 fs.copyFileSync(path.join(import.meta.dirname, "diagnostics.mjs"), path.join(STAGING, "lh-diagnostics.mjs"));
+fs.copyFileSync(path.join(import.meta.dirname, "runtime-fixes.mjs"), path.join(STAGING, "lh-runtime-fixes.mjs"));
 
 const git = (...a) => spawnSync("git", a, { cwd: ROOT, encoding: "utf8" });
 const sha = git("rev-parse", "--short=12", "HEAD").stdout?.trim() || "nogit";

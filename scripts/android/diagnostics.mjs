@@ -88,6 +88,7 @@ async function run() {
 	await probe("regex-unicode-property", () => {
 		if (!/\p{L}/u.test("é")) throw new Error("no match");
 	});
+	// Tests the JS replacement from runtime-fixes.mjs; the native one segfaults.
 	await probe("intl-segmenter", () => {
 		const n = [...new Intl.Segmenter("en", { granularity: "word" }).segment("hello world")].length;
 		return `${n} segments`;

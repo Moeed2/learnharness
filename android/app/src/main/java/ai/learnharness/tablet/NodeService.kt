@@ -90,6 +90,12 @@ class NodeService : Service() {
             env.forEach { (k, v) -> Os.setenv(k, v, true) }
 
             val args = mutableListOf("node")
+            // Must load first: replaces Intl.Segmenter, which segfaults libnode on Android.
+            val fixes = File(serverDir, "lh-runtime-fixes.mjs")
+            if (fixes.isFile) {
+                args += "--import"
+                args += fixes.path
+            }
             val diag = File(serverDir, "lh-diagnostics.mjs")
             if (diag.isFile) {
                 args += "--import"

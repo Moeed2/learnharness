@@ -118,3 +118,13 @@ WebView owned by the Kotlin shell.
 * Errors: non-200 with `{"error": "..."}`.
 * Node client: `src/agent/subagents/headless-android.ts`; `getHeadless()` returns it when `LH_ANDROID=1` and both
   env vars exist (`available()` is then always true). PDF pages still use pdfjs + canvas.
+
+## Device notes (HarmonyOS)
+
+- HarmonyOS hides app logs by default. Enable them until the next reboot with
+  `adb shell setprop log.tag.LH V` and `adb shell setprop log.tag.LH-Node V`.
+- nodejs-mobile 24.20 segfaults inside native `Intl.Segmenter#segment()` on
+  Android, killing the server. `scripts/android/runtime-fixes.mjs` is preloaded
+  first and replaces it with a pure-JS approximation (server side only).
+- From PowerShell, quote Gradle properties with dots, e.g.
+  `"-PndkVersion=27.3.13750724"`.
