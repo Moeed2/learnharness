@@ -279,3 +279,46 @@ test("a present parent from another unit is still rejected", async () => {
   x.meta.parents = [y.meta.id];
   await assert.rejects(b.engine.sync(), /parent/i);
 });
+
+test("a blob pruned by another device's cleanup is re-uploaded and the document completes", async () => {
+  const s = setup(),
+    a = s.device("a"),
+    b = s.device("b");
+  const bytes = Buffer.from("original"),
+    text = Buffer.from("text");
+  const sha = (x: Buffer) => createHash("sha256").update(x).digest("hex");
+  const hash = sha(bytes),
+    textHash = sha(text);
+  fs.mkdirSync(path.join(a.root, "documents/blobs"), { recursive: true });
+  fs.writeFileSync(path.join(a.root, "documents/blobs", hash), bytes);
+  fs.writeFileSync(path.join(a.root, "documents/blobs", textHash), text);
+  const id = sha(Buffer.from("doc.pdf\0" + hash));
+  const record = "documents/records/" + id + ".json";
+  s.write(a.root, record, {
+    id,
+    size: bytes.length,
+    mimeType: "application/pdf",
+    importedAt: new Date(T0).toISOString(),
+    name: "doc.pdf",
+    hash,
+    textHash,
+  });
+  s.write(a.root, "chats/c.json", { n: 1 });
+  await a.engine.sync();
+  // Another device's cleanup removed blob X from the remote.
+  for (const r of s.ofUnit("documents/blobs/" + hash))
+    s.revisions.delete(r.meta.id);
+  const first = await b.engine.sync();
+  assert.equal(first.deferred, true);
+  assert.deepEqual(s.read(b.root, "chats/c.json"), { n: 1 });
+  assert.equal(fs.existsSync(path.join(b.root, record)), false);
+  assert.equal((await a.engine.sync()).uploaded, 1);
+  assert.equal(s.ofUnit("documents/blobs/" + hash).length, 1);
+  const second = await b.engine.sync();
+  assert.equal(second.deferred, false);
+  assert.equal(fs.existsSync(path.join(b.root, record)), true);
+  assert.equal(
+    fs.readFileSync(path.join(b.root, "documents/blobs", hash), "utf8"),
+    "original",
+  );
+});

@@ -316,7 +316,11 @@ export class SyncEngine {
         .filter((m) => m.unit === ref)
         .sort(byAge);
       const meta = candidates.at(-1);
-      if (!meta) throw Error("Missing referenced blob");
+      if (!meta) {
+        // Pruned remotely: a valid local copy is enough, otherwise unavailable.
+        if (localBlobHash(o.root, ref)) return true;
+        throw Error("Missing referenced blob");
+      }
       if (localBlobHash(o.root, ref) === meta.hash) return true;
       const revision = await o.remote.download(meta);
       validateRevision(revision, meta);
@@ -429,9 +433,21 @@ export class SyncEngine {
     for (const { heads } of selected.values())
       for (const m of heads) await get(m);
     // Download/validate every referenced blob before any workspace file is replaced.
-    for (const { heads } of selected.values()) {
+    // A unit whose blob was pruned remotely is skipped until its publisher
+    // re-uploads the blob; other units still sync.
+    const skipped = new Set<string>();
+    for (const [unit, { heads }] of selected) {
       for (const head of heads)
         for (const ref of blobReferences(cache.get(head.id)!.files)) {
+          if (
+            !skipped.has(unit) &&
+            ![...metas.values()].some((m) => m.unit === ref) &&
+            !localBlobHash(o.root, ref)
+          ) {
+            skipped.add(unit);
+            result.deferred = true;
+          }
+          if (skipped.has(unit)) continue;
           if (!(await ensureBlob(ref))) {
             result.deferred = true;
             return result;
@@ -505,6 +521,7 @@ export class SyncEngine {
     );
     const changed: string[] = [];
     for (const [unit, { heads, winner }] of ordered) {
+      if (skipped.has(unit)) continue;
       const r = cache.get(winner.id)!;
       for (const loser of heads.slice(0, -1)) {
         const conflict = safePath(
