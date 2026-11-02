@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, useSyncExternalStore, type ChangeEvent } from "react";
 import { UploadIcon } from "lucide-react";
 import { Hint } from "@/components/ui/hint";
+import { androidFilesBridge, describeProgress, importFolderFiles, onImportProgress } from "@/lib/android-files";
 import { createNotesImportQueue, EMPTY_IMPORT_QUEUE, notesPath } from "./notes-import-queue";
 
 export { MAX_IMPORT_BYTES } from "@/lib/notes-import-limits.ts";
@@ -77,7 +78,7 @@ export function useNotesImport(callbacks: { onStart?: () => void; onFinish?: () 
 	}, [snapshot.completion]);
 	return {
 		errors: snapshot.errors, notices: snapshot.notices, importing: snapshot.importing,
-		onImportFiles: (files: FileList | null) => {
+		onImportFiles: (files: ArrayLike<File> | null) => {
 			if (!files || files.length === 0) return;
 			latest.current.onStart?.();
 			pageImportQueue.append(Array.from(files));
@@ -87,10 +88,27 @@ export function useNotesImport(callbacks: { onStart?: () => void; onFinish?: () 
 
 /** PR198's shared Files / Folder native picker. Unlike the donor, it remains
  * available while work is running; later selections join the SAME queue. */
-export function NotesImportControl({ importing, onImportFiles }: { importing: boolean; onImportFiles: (files: FileList | null) => void }) {
+export function NotesImportControl({ importing, onImportFiles }: { importing: boolean; onImportFiles: (files: ArrayLike<File> | null) => void }) {
 	const filesRef = useRef<HTMLInputElement>(null);
 	const folderRef = useRef<HTMLInputElement>(null);
 	const [open, setOpen] = useState(false);
+	const [copying, setCopying] = useState("");
+	/** Android WebView cannot do webkitdirectory: the shell's native folder
+	 * picker copies the tree into app storage and serves it back, and the
+	 * rebuilt Files (with webkitRelativePath) join the normal upload queue. */
+	const pickAndroidFolder = async () => {
+		const bridge = androidFilesBridge();
+		if (!bridge || copying) return;
+		setCopying("Copying…");
+		const off = onImportProgress((progress) => setCopying(describeProgress(progress)));
+		try {
+			const picked = await bridge.pickFolder({ extensions: ["md", "markdown", "txt", "pdf"] });
+			const { files } = await importFolderFiles(picked);
+			onImportFiles(files);
+			if (picked.id) void bridge.releaseImport(picked.id);
+		} catch { /* cancelled or unreadable: nothing to import */ }
+		finally { off(); setCopying(""); }
+	};
 	const onChange = (event: ChangeEvent<HTMLInputElement>) => {
 		onImportFiles(event.target.files);
 		event.target.value = "";
@@ -105,13 +123,17 @@ export function NotesImportControl({ importing, onImportFiles }: { importing: bo
 			<Hint label="Import notes into the graph" side="bottom">
 				<button type="button" onClick={() => setOpen(!open)} aria-expanded={open} aria-haspopup="menu" data-testid="import-notes"
 					className="flex h-7 items-center gap-1.5 rounded-lg px-2.5 text-xs text-muted-foreground transition-colors hover:bg-accent">
-					<UploadIcon className="size-3" />{importing ? "Importing…" : "Import notes…"}
+					<UploadIcon className="size-3" />{copying || (importing ? "Importing…" : "Import notes…")}
 				</button>
 			</Hint>
 			{open && (
 				<div role="menu" aria-label="Import notes" className="absolute right-0 top-full z-50 mt-1 min-w-32 rounded-lg border bg-card p-1 shadow-lg">
 					{choices.map(([label, input]) => <button key={label} type="button" role="menuitem" className="block w-full rounded px-2 py-1 text-left text-xs hover:bg-accent"
-						onClick={() => { setOpen(false); input.current?.click(); }}>{label}</button>)}
+						onClick={() => {
+						setOpen(false);
+						if (label === "Folder" && androidFilesBridge()) void pickAndroidFolder();
+						else input.current?.click();
+					}}>{label}</button>)}
 				</div>
 			)}
 		</div>

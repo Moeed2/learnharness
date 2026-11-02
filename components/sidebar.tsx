@@ -156,7 +156,7 @@ export function SidebarProvider({ children }: { children: React.ReactNode }) {
 		if (narrow && !open) {
 			localStorage.setItem(STORAGE_KEY, "0");
 			setOpen(true);
-			window.lh?.expandWindow();
+			window.lh?.expandWindow?.();
 			return;
 		}
 		setOpen((v) => {

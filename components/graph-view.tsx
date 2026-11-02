@@ -857,7 +857,7 @@ export function GraphChromeRow({
 	noMatch: boolean;
 	importing: boolean;
 	searchInputRef: React.RefObject<HTMLInputElement | null>;
-	onImportFiles: (files: FileList | null) => void;
+	onImportFiles: (files: ArrayLike<File> | null) => void;
 	settings: GraphRenderSettings;
 	changeSettings: (update: (cur: RenderSettings) => RenderSettings) => void;
 	/** Opens the chain table overlay (the chains-overlay plan,
