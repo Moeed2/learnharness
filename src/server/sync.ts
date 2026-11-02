@@ -83,6 +83,7 @@ async function runSync(reason: SyncReason = "manual"): Promise<void> {
 		} catch (error) {
 			if (generation !== state.generation) return;
 			const message = error instanceof Error ? error.message : "Sync could not finish. Local changes are safe.";
+			console.error("[sync] run failed:", error);
 			state.error = message;
 			state.phase = /unreachable|unavailable|offline|network/i.test(message) ? "offline" : "error";
 		} finally { state.running = undefined; }
@@ -148,6 +149,7 @@ export async function syncResponse(request: Request): Promise<Response> {
 			default: return json({ error: "Unknown sync action." }, 400);
 		}
 	} catch (error) {
+		console.error("[sync] request failed:", error);
 		return json({ error: error instanceof Error ? error.message : "Sync could not finish. Your local data is safe." }, 400);
 	}
 }

@@ -82,7 +82,16 @@ function safeSyncError(value: unknown): string {
   case "Missing conflict blob": return "This saved copy is incomplete and could not be restored. Export another copy or try syncing again.";
   case "Account mismatch or pending sync": return "Wait for syncing to finish and connect the Google account that owns this saved copy.";
   case "Account binding mismatch: use a separate data root": return "This workspace belongs to a different Google account. Connect its original account before syncing.";
-  default: return fallbackSyncError;
+  default: {
+   // Show the real reason, shortened and on one line, so a failure can be diagnosed on the device itself.
+   // Secrets and file paths are blanked out so tokens never reach the screen.
+   const detail = value
+    .replace(/\b[\w.-]*(token|secret|code|key|password|bearer|authorization)[\w.-]*\s*[=:]\s*\S+/gi, "$1=…")
+    .replace(/\bBearer\s+\S+/gi, "Bearer …")
+    .replace(/(?:[A-Za-z]:\\|\/)[^\s"']+/g, "…")
+    .replace(/\s+/g, " ").trim().slice(0, 240);
+   return detail ? `Sync could not finish (${detail}). Your data is safe; try again.` : fallbackSyncError;
+  }
  }
 }
 class SyncRequestError extends Error {}

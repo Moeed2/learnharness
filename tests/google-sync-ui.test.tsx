@@ -194,6 +194,7 @@ test("safe backend restore errors stay actionable; unknown raw error details are
  backendError = "access_token=private-token-value /private/credentials.json";
  await act(async () => findButton("Confirm restore").click());
  assert.doesNotMatch(host!.textContent!, /private-token-value|credentials.json/);
+ assert.match(host!.textContent!, /Sync could not finish/);
  assert.match(host!.textContent!, /try again/);
 });
 test("safe status errors explain expired Google sessions", async () => {
