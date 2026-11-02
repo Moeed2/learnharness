@@ -4,6 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { standardFontsDir } from "./pdf-ops";
+import { isAndroidServer } from "../../../lib/platform.ts";
 
 /**
  * Verification engines for sub-agents: demos use the app's own Electron
@@ -94,6 +95,7 @@ const CHROME_CANDIDATES = [
 ];
 
 export function resolveChromeExecutablePath(): string | null {
+	if (isAndroidServer()) return null; // no Chrome binary to spawn inside the Android app
 	const candidates = [process.env.CHROME_PATH, ...CHROME_CANDIDATES].filter(
 		(p): p is string => typeof p === "string" && p.length > 0,
 	);
@@ -147,6 +149,7 @@ export function browserServiceSpawnEnv(
  *  ELECTRON_RUN_AS_NODE so process.execPath IS the app binary; in dev
  *  (plain node) the electron package resolves to the dev binary path. */
 export function browserServiceBinary(): string | null {
+	if (isAndroidServer()) return null; // no Electron helper on Android
 	if (process.versions.electron) return process.execPath;
 	try {
 		const req = createRequire(import.meta.url);
@@ -235,6 +238,7 @@ async function connectBrowserService(): Promise<import("puppeteer-core").Browser
 let helperPageChain: Promise<unknown> = Promise.resolve();
 
 async function withBrowserPage<T>(fn: (page: import("puppeteer-core").Page) => Promise<T>): Promise<T> {
+	if (isAndroidServer()) throw new Error(NO_CHROME_MESSAGE); // never spawn a browser process on Android
 	// Helper first (owner ruling 2026-10-10: the app's own Chromium primary,
 	// system Chrome fallback) — deterministic across users, zero install.
 	const helper = await connectBrowserService();

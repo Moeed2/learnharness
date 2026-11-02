@@ -1,6 +1,7 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { isAndroidServer } from "../../../lib/platform.ts";
 
 type BinaryLookup = {
 	env: Record<string, string | undefined>;
@@ -81,6 +82,7 @@ function isExecutableFile(filePath: string): boolean {
 }
 
 export function getClaudeBinary(): string | null {
+	if (isAndroidServer()) return null; // the Claude Code CLI cannot run inside the Android app
 	return resolveClaudeBinary({
 		env: process.env,
 		platform: process.platform,
