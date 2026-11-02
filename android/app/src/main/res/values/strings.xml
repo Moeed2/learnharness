@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">LearnHarness</string>
+    <string name="notification_channel">Local server</string>
+    <string name="notification_title">LearnHarness is running</string>
+    <string name="notification_text">Local server active on this device</string>
+</resources>

@@ -19,3 +19,15 @@ xai-credentials.json*
 
 # dev-fresh launcher scratch (fresh-user sim): disposable per launch
 .fresh-data/
+
+# Android tablet app (docs/android.md): build outputs, fetched libnode, payload
+android/.gradle/
+android/.kotlin/
+android/build/
+android/app/build/
+android/app/.cxx/
+android/local.properties
+android/libnode/
+android/.payload-staging/
+android/app/src/main/assets/server.zip
+*.apk
