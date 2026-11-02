@@ -15,6 +15,8 @@ export interface SyncRemote {
   list(): Promise<RevisionMeta[]>;
   download(meta: RevisionMeta): Promise<Revision>;
   upload(revision: Revision): Promise<void>;
+  /** Permanently delete one revision; deleting a missing one succeeds. */
+  remove(meta: RevisionMeta): Promise<void>;
 }
 export interface SyncEngineOptions {
   root: string;

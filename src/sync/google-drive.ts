@@ -19,13 +19,13 @@ export class GoogleDriveRemote implements SyncRemote {
 	private files = new Map<string, { id: string; meta: RevisionMeta }>();
 	constructor(private readonly accessToken: () => Promise<string>, private readonly request: typeof fetch = fetch) {}
 
-	private async call(url: string, init: RequestInit = {}): Promise<Response> {
+	private async call(url: string, init: RequestInit = {}, tolerate: number[] = []): Promise<Response> {
 		const headers = new Headers(init.headers);
 		headers.set("Authorization", `Bearer ${await this.accessToken()}`);
 		let response: Response;
 		try { response = await this.request(url, { ...init, headers, redirect: "error", signal: AbortSignal.timeout(90_000) }); }
 		catch { throw new Error("Google Drive is unreachable. Your local changes are safe; syncing will retry."); }
-		if (response.ok) return response;
+		if (response.ok || tolerate.includes(response.status)) return response;
 		if (response.status === 401) throw new Error("Google Drive sign-in expired. Reconnect your account in Sync settings.");
 		if (response.status === 403 || response.status === 429) throw new Error("Google Drive permission or quota limit. Check your account and try syncing later.");
 		throw new Error(`Google Drive request failed (${response.status}). Your local changes are safe.`);
@@ -77,6 +77,13 @@ export class GoogleDriveRemote implements SyncRemote {
 		if (!validMeta(revision.meta) || JSON.stringify(revision.meta) !== JSON.stringify(entry.meta)
 			|| !revision.files || typeof revision.files !== "object" || Array.isArray(revision.files)) throw new Error("Google Drive revision content does not match its metadata.");
 		return revision;
+	}
+
+	async remove(meta: RevisionMeta): Promise<void> {
+		const entry = this.files.get(meta.id);
+		if (!entry) return;
+		await this.call(`${API}/${encodeURIComponent(entry.id)}`, { method: "DELETE" }, [404]);
+		this.files.delete(meta.id);
 	}
 
 	async upload(revision: Revision): Promise<void> {

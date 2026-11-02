@@ -18,6 +18,9 @@ function setup() {
     async upload(r) {
       revisions.set(r.meta.id, structuredClone(r));
     },
+    async remove(m) {
+      revisions.delete(m.id);
+    },
   };
   const device = (name: string) => {
     const root = path.join(dir, name);
@@ -324,8 +327,10 @@ test("invalid hash and missing parents fail closed", async () => {
   s.write(a.root, "chats/c.json", {});
   await a.engine.sync();
   const revision = [...s.revisions.values()][0]!;
+  // A parent absent from the listing is pruned history, not corruption.
   revision.meta.parents = ["missing"];
-  await assert.rejects(b.engine.sync(), /parent/i);
+  await b.engine.sync();
+  assert.equal(fs.existsSync(path.join(b.root, "chats/c.json")), true);
   revision.meta.parents = [];
   revision.meta.hash = "0".repeat(64);
   await assert.rejects(b.engine.sync(), /hash/i);

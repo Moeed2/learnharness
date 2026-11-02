@@ -27,6 +27,11 @@ interface Baseline {
   /** Newest `at` among the heads, so restores stay later than their parents. */
   at?: number;
 }
+/** Superseded history older than this is pruned from the remote. */
+const GRACE = 30 * 24 * 3600 * 1000;
+const COMPACT_EVERY = 24 * 3600 * 1000;
+const MAX_DELETES = 500;
+const MAX_LISTED = 200_000;
 /** Oldest first: by creation time (legacy = 0), id as a stable tiebreaker. */
 const byAge = (a: RevisionMeta, b: RevisionMeta) =>
   (a.at ?? 0) - (b.at ?? 0) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
@@ -37,6 +42,8 @@ interface State {
   pendingBlob?: Revision;
   /** A workspace merge persisted before upload; never a local edit. */
   pendingMerge?: Revision;
+  /** Last remote history cleanup (ms), at most one per day per device. */
+  lastCompactedAt?: number;
 }
 const flights = new Map<string, Promise<SyncResult>>();
 export class SyncEngine {
@@ -171,7 +178,7 @@ export class SyncEngine {
           ),
         );
     let listed = await o.remote.list();
-    if (listed.length > 10000) throw Error("Too many revisions");
+    if (listed.length > MAX_LISTED) throw Error("Too many revisions");
     const metas = new Map<string, RevisionMeta>();
     for (const meta of listed) {
       validateMeta(meta);
@@ -193,18 +200,29 @@ export class SyncEngine {
     }
     const visiting = new Set<string>(),
       visited = new Set<string>();
-    function visit(m: RevisionMeta) {
-      if (visiting.has(m.id)) throw Error("Cyclic parents");
-      if (visited.has(m.id)) return;
-      visiting.add(m.id);
-      for (const id of m.parents) {
+    // Iterative so a very long history cannot overflow the stack.
+    function visit(root: RevisionMeta) {
+      const stack: { m: RevisionMeta; next: number }[] = [{ m: root, next: 0 }];
+      if (visited.has(root.id)) return;
+      visiting.add(root.id);
+      while (stack.length) {
+        const top = stack[stack.length - 1]!;
+        const id = top.m.parents[top.next++];
+        if (id === undefined) {
+          visiting.delete(top.m.id);
+          visited.add(top.m.id);
+          stack.pop();
+          continue;
+        }
         const p = metas.get(id);
-        if (!p || p.unit !== m.unit)
-          throw Error("Missing or cross-unit parent");
-        visit(p);
+        // A pruned parent is an already-superseded ancestor.
+        if (!p) continue;
+        if (p.unit !== top.m.unit) throw Error("Cross-unit parent");
+        if (visiting.has(p.id)) throw Error("Cyclic parents");
+        if (visited.has(p.id)) continue;
+        visiting.add(p.id);
+        stack.push({ m: p, next: 0 });
       }
-      visiting.delete(m.id);
-      visited.add(m.id);
     }
     for (const m of metas.values()) visit(m);
     if (!unchanged()) {
@@ -435,12 +453,14 @@ export class SyncEngine {
           const id = todo.pop()!;
           if (out.has(id)) continue;
           out.add(id);
-          todo.push(...metas.get(id)!.parents);
+          todo.push(...(metas.get(id)?.parents ?? []));
         }
         return out;
       };
       const sets = ws.heads.map(ancestors);
-      const common = [...sets[0]!].filter((id) => sets.every((x) => x.has(id)));
+      const common = [...sets[0]!].filter(
+        (id) => metas.has(id) && sets.every((x) => x.has(id)),
+      );
       const shadowed = new Set(
         common.flatMap((id) => [...ancestors(metas.get(id)!)]),
       );
@@ -512,6 +532,70 @@ export class SyncEngine {
     state.pending = [];
     atomicJSON(stateFile, state);
     if (changed.length) o.onApplied?.(changed);
+    await this.compact(state, stateFile, metas, cache, references);
     return result;
+  }
+  /** Prune superseded history from the remote; best effort, never fails a sync. */
+  private async compact(
+    state: State,
+    stateFile: string,
+    metas: Map<string, RevisionMeta>,
+    cache: Map<string, Revision>,
+    references: Set<string>,
+  ): Promise<void> {
+    const now = (this.options.now ?? Date.now)();
+    if (now - (state.lastCompactedAt ?? -Infinity) < COMPACT_EVERY) return;
+    try {
+      const cutoff = now - GRACE,
+        old = (m: RevisionMeta) => (m.at ?? 0) < cutoff,
+        doomed = new Map<string, RevisionMeta>();
+      const byUnit = new Map<string, RevisionMeta[]>();
+      for (const m of metas.values()) {
+        const group = byUnit.get(m.unit) ?? [];
+        group.push(m);
+        byUnit.set(m.unit, group);
+      }
+      const heads: RevisionMeta[] = [];
+      for (const [unit, group] of byUnit) {
+        if (unit.startsWith("documents/blobs/")) continue;
+        const parents = new Set(group.flatMap((m) => m.parents)),
+          unitHeads = group.filter((m) => !parents.has(m.id));
+        heads.push(...unitHeads);
+        if (unitHeads.length !== 1) continue;
+        const todo = [...unitHeads[0]!.parents],
+          seen = new Set<string>();
+        while (todo.length) {
+          const m = metas.get(todo.pop()!);
+          if (!m || seen.has(m.id)) continue;
+          seen.add(m.id);
+          if (old(m)) doomed.set(m.id, m);
+          todo.push(...m.parents);
+        }
+      }
+      // Blob garbage collection needs every head's files without downloading.
+      const headFiles = heads.map((m) => cache.get(m.id)?.files);
+      if (headFiles.every((f) => f)) {
+        const live = new Set(references);
+        for (const f of headFiles)
+          for (const ref of blobReferences(f!)) live.add(ref);
+        for (const [unit, group] of byUnit) {
+          if (!unit.startsWith("documents/blobs/")) continue;
+          const sorted = [...group].sort(byAge);
+          if (live.has(unit)) sorted.pop();
+          for (const m of sorted) if (old(m)) doomed.set(m.id, m);
+        }
+      }
+      for (const m of [...doomed.values()].sort(byAge).slice(0, MAX_DELETES)) {
+        try {
+          await this.options.remote.remove(m);
+        } catch {
+          // Retried by the next daily cleanup.
+        }
+      }
+    } catch {
+      // Cleanup must never fail a sync that already succeeded.
+    }
+    state.lastCompactedAt = now;
+    atomicJSON(stateFile, state);
   }
 }

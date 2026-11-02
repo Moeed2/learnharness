@@ -16,6 +16,7 @@ function setup() {
 		async list() { return [...data.values()].map((revision) => structuredClone(revision.meta)); },
 		async download(meta) { return structuredClone(data.get(meta.id)!); },
 		async upload(revision) { data.set(revision.meta.id, structuredClone(revision)); },
+		async remove(meta) { data.delete(meta.id); },
 	};
 	const device = (name: string) => {
 		const root = path.join(temp, name); fs.mkdirSync(root);

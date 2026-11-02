@@ -112,6 +112,9 @@ function setup() {
     async upload(r) {
       revisions.set(r.meta.id, structuredClone(r));
     },
+    async remove(m) {
+      revisions.delete(m.id);
+    },
   };
   const device = (name: string) => {
     const root = path.join(dir, name);
