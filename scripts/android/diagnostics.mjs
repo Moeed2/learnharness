@@ -38,18 +38,89 @@ const PNG_1X1 = Buffer.from(
 	"base64",
 );
 
-async function run() {
-	await probe("canvas", async () => {
-		const { createCanvas } = await import("@napi-rs/canvas");
-		const c = createCanvas(10, 10);
-		c.getContext("2d").fillRect(0, 0, 5, 5);
-		return `png ${c.toBuffer("image/png").length} bytes`;
+const TINY_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8"><rect width="8" height="8" fill="red"/></svg>';
+
+/** One-page PDF with a correct xref table ("Hello" in Helvetica). */
+const TINY_PDF = (() => {
+	const objs = [
+		"<< /Type /Catalog /Pages 2 0 R >>",
+		"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+		"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 100] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>",
+		"<< /Length 36 >>\nstream\nBT /F1 24 Tf 20 40 Td (Hello) Tj ET\nendstream",
+		"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+	];
+	let out = "%PDF-1.4\n";
+	const offsets = [];
+	objs.forEach((o, i) => {
+		offsets.push(out.length);
+		out += `${i + 1} 0 obj\n${o}\nendobj\n`;
 	});
-	await probe("resvg", async () => {
-		const mod = await import("@resvg/resvg-js");
-		const Resvg = mod.Resvg ?? mod.default?.Resvg;
-		const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8"><rect width="8" height="8" fill="red"/></svg>';
-		return `png ${new Resvg(svg).render().asPng().length} bytes`;
+	const xref = out.length;
+	out += `xref\n0 ${objs.length + 1}\n0000000000 65535 f \n`;
+	for (const o of offsets) out += `${String(o).padStart(10, "0")} 00000 n \n`;
+	out += `trailer\n<< /Size ${objs.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
+	return Buffer.from(out, "latin1");
+})();
+
+async function run() {
+	// The android N-API addons are not shipped (they cannot dlopen in nodejs-mobile).
+	// Informational only, opt in with LH_PROBE_NATIVE_ADDONS=1 after re-adding them.
+	if (process.env.LH_PROBE_NATIVE_ADDONS === "1") {
+		await probe("canvas", async () => {
+			const { createCanvas } = await import("@napi-rs/canvas");
+			const c = createCanvas(10, 10);
+			c.getContext("2d").fillRect(0, 0, 5, 5);
+			return `png ${c.toBuffer("image/png").length} bytes`;
+		});
+		await probe("resvg", async () => {
+			const mod = await import("@resvg/resvg-js");
+			const Resvg = mod.Resvg ?? mod.default?.Resvg;
+			return `png ${new Resvg(TINY_SVG).render().asPng().length} bytes`;
+		});
+	}
+	// SVG path used by the app: resvg compiled to WASM, fonts from /system/fonts.
+	await probe("resvg-wasm", async () => {
+		const mod = await import("@resvg/resvg-wasm");
+		const { createRequire } = await import("node:module");
+		await mod.initWasm(fs.readFileSync(createRequire(import.meta.url).resolve("@resvg/resvg-wasm/index_bg.wasm")));
+		const plain = new mod.Resvg(TINY_SVG).render().asPng().length;
+		const fontDirs = ["/system/fonts", "/product/fonts"].filter((d) => fs.existsSync(d));
+		const roboto = fontDirs.map((d) => path.join(d, "Roboto-Regular.ttf")).find((f) => fs.existsSync(f));
+		let text = "no Roboto-Regular.ttf";
+		if (roboto) {
+			const withText = '<svg xmlns="http://www.w3.org/2000/svg" width="120" height="30"><text x="4" y="22" font-family="Roboto" font-size="20">Hello</text></svg>';
+			const blank = '<svg xmlns="http://www.w3.org/2000/svg" width="120" height="30"/>';
+			const opts = { font: { fontBuffers: [new Uint8Array(fs.readFileSync(roboto))], defaultFontFamily: "Roboto" } };
+			const a = new mod.Resvg(withText, opts).render().pixels;
+			const b = new mod.Resvg(blank, opts).render().pixels;
+			text = a.some((v, i) => v !== b[i]) ? "text drawn" : "TEXT NOT DRAWN";
+		}
+		return `png ${plain} bytes; ${text}`;
+	});
+	// pdfjs text extraction must work without any canvas package.
+	await probe("pdfjs-text", async () => {
+		const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
+		const task = pdfjs.getDocument({ data: new Uint8Array(TINY_PDF), verbosity: 0 });
+		const doc = await task.promise;
+		const content = await (await doc.getPage(1)).getTextContent();
+		const text = content.items.map((i) => i.str).join("");
+		await task.destroy();
+		return `pages ${doc.numPages}, text "${text}"`;
+	});
+	// Kotlin PdfRenderer through the loopback render service (POST /pdf).
+	await probe("render-service-pdf", async () => {
+		const url = process.env.LH_ANDROID_RENDER_URL;
+		const token = process.env.LH_ANDROID_RENDER_TOKEN;
+		if (!url || !token) return "skipped (no render service env)";
+		const res = await fetch(`${url}/pdf`, {
+			method: "POST",
+			headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+			body: JSON.stringify({ pdfBase64: TINY_PDF.toString("base64"), pages: [1], dpi: 72 }),
+		});
+		const j = await res.json();
+		if (!res.ok) throw new Error(`HTTP ${res.status} ${j.error ?? ""}`);
+		const p = j.pages?.[0];
+		return `pages ${j.numPages}, page1 ${p?.width}x${p?.height} png ${Buffer.from(p?.png ?? "", "base64").length} bytes`;
 	});
 	await probe("photon-wasm", async () => {
 		const photon = await import("@silvia-odwyer/photon-node");

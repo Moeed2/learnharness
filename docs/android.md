@@ -38,8 +38,8 @@ MainActivity --starts--> NodeService (foreground, type specialUse)
 * **Changing the package id**: edit `lh.applicationId` in `android/gradle.properties` (one place).
   Kotlin/JNI keep the `ai.learnharness.tablet` namespace.
 * **Diagnostics spike**: `scripts/android/diagnostics.mjs` is shipped as `lh-diagnostics.mjs` and
-  loaded with `node --import` before `server.js`. It probes `@napi-rs/canvas`,
-  `@resvg/resvg-js`, photon WASM, `worker_threads`, `module.registerHooks`, Unicode property
+  loaded with `node --import` before `server.js`. It probes `@resvg/resvg-wasm` (load + tiny
+  render + text with Roboto), pdfjs text extraction, `POST /pdf` on the render service, photon WASM, `worker_threads`, `module.registerHooks`, Unicode property
   regexes, `Intl.Segmenter`, `crypto.subtle`, `fetch`, `os.homedir()`; writes
   `filesDir/diagnostics.json` and logs one `LH_DIAGNOSTICS {json}` line. It never crashes the server.
   Read it on a device with: `adb shell run-as ai.learnharness.tablet cat files/diagnostics.json`
@@ -90,9 +90,11 @@ Local build (on a machine with the Android SDK/NDK): run steps 1-3 above, then
 * The settings/setup UI is still the desktop one (API-key rows, Copilot/Grok rows, etc.). Hiding
   non-ChatGPT providers, touch/tablet layout work, and a ChatGPT sign-in via Custom Tab are later steps.
 * No access guard yet: any app on the device can reach `127.0.0.1:PORT` (step 2 adds a cookie guard).
-* Native addons (`@napi-rs/canvas`, `@resvg/resvg-js`) are prebuilt `android-arm64` binaries that do not
-  link `libnode.so` and (resvg) are 4 KB-aligned. Whether they load is exactly what the diagnostics spike
-  measures; the app works without them (PDF page rendering / SVG rasterisation will fail lazily).
+* Native addons (`@napi-rs/canvas`, `@resvg/resvg-js`) cannot load in nodejs-mobile (device result:
+  `cannot locate symbol "napi_get_reference_value"`; they do not link `libnode.so`). They are treated as
+  unavailable and are **not shipped**: `build-payload.mjs` skips the `android-arm64` packages unless
+  `LH_ANDROID_ADDONS=1` is set (re-add them that way, and `LH_PROBE_NATIVE_ADDONS=1` makes the diagnostics probe them).
+  Replacements: SVG = `@resvg/resvg-wasm`, PDF pages = `android.graphics.pdf.PdfRenderer`, images = photon WASM.
 * Android may kill the process under memory pressure; there is no in-process Node restart.
 * `x86_64` is shipped only so the CI emulator can run the app; real devices use `arm64-v8a`.
 
@@ -114,10 +116,27 @@ WebView owned by the Kotlin shell.
   unhandled rejections) go to `pageErrors`, other console errors to `consoleErrors`; subresource load errors and
   HTTP >= 400 go to `failedRequests`. The probe is evaluated after settle (global eval, promises awaited, 10 s cap).
 * `POST /svg` `{svg, width=900, height=700}` returns `image/png` (white page, WebView draw into a Bitmap).
-  Node uses it only when resvg fails.
+  Node uses it only when resvg-wasm fails.
+* `POST /pdf` `{pdfBase64 | path, pages: [1-based], dpi=150}` returns JSON
+  `{numPages, pages: [{page, width, height, png (base64)}]}`, rendered with `PdfRenderer` (`PdfPageRenderer.kt`)
+  on a white background. Size limits match desktop (16 MP, 8192 px per side; larger pages lose scale).
+  `path` must be inside the app's files/cache/external-files dirs; Node sends bytes inline up to 9 MiB and a path
+  beyond that. Out-of-range pages are skipped. Errors are HTTP 422 `{error, code}` with code `encrypted`
+  (password protected), `invalid` (unreadable PDF) or `bad_request`; Node maps them to `AndroidPdfError`.
+  Text-side pdf tools (info/extract/search/markdown) stay on pdfjs, which needs no canvas (it only warns that
+  `@napi-rs/canvas` cannot be loaded).
+
+## SVG on Android
+
+`renderSvg` (visual-maker) uses `@resvg/resvg-wasm` 2.6.2 (MPL-2.0, 2.5 MB wasm, same engine and options as
+`@resvg/resvg-js`) when `LH_ANDROID=1` (`src/agent/subagents/svg-wasm.ts`). There is no `loadSystemFonts`, so it
+reads font files from `/system/fonts`, `/product/fonts`, `/system_ext/fonts`, `/vendor/fonts` (override with
+`LH_SVG_FONT_DIRS`): Roboto, Noto Serif, Droid Sans Mono, HarmonyOS Sans, Noto CJK/SC/TC/JP/KR and other
+Noto Regular/Bold, within a 48 MB budget, color emoji excluded. Generic families map to Roboto / Noto Serif /
+Droid Sans Mono when present. If the WASM render fails, the WebView `POST /svg` fallback is used.
 * Errors: non-200 with `{"error": "..."}`.
 * Node client: `src/agent/subagents/headless-android.ts`; `getHeadless()` returns it when `LH_ANDROID=1` and both
-  env vars exist (`available()` is then always true). PDF pages still use pdfjs + canvas.
+  env vars exist (`available()` is then always true). PDF pages go through `POST /pdf` (PdfRenderer); SVG stays in Node (resvg-wasm).
 
 ## Device notes (HarmonyOS)
 

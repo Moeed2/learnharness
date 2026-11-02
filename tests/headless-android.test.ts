@@ -99,14 +99,14 @@ test("renderSvg returns the PNG bytes", async () => {
 	);
 });
 
-test("createAndroidHeadless is available and delegates SVG/PDF to the base", async () => {
+test("createAndroidHeadless is available, delegates SVG to the base and PDF to the client", async () => {
 	const calls: string[] = [];
 	const base = {
 		...realHeadless,
 		renderSvg: async () => (calls.push("svg"), Buffer.from("s")),
-		renderPdfPages: async () => (calls.push("pdf"), []),
+		renderPdfPages: async () => (calls.push("base-pdf"), []),
 	};
-	const client = { runDemo: async () => (calls.push("demo"), { consoleErrors: [], pageErrors: [], failedRequests: [], ok: true }), renderSvg: async () => Buffer.from("x") };
+	const client = { renderPdf: async () => (calls.push("pdf"), []), runDemo: async () => (calls.push("demo"), { consoleErrors: [], pageErrors: [], failedRequests: [], ok: true }), renderSvg: async () => Buffer.from("x") };
 	const api = createAndroidHeadless(client, base);
 	assert.equal(api.available(), true);
 	assert.equal(api.unavailableReason(), null);

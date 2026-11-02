@@ -6,6 +6,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { isAndroidServer } from "../../../lib/platform";
 import { androidRenderClientFromEnv, createAndroidHeadless } from "./headless-android";
 import { standardFontsDir } from "./pdf-ops";
+import { renderSvgWasm } from "./svg-wasm";
 
 /**
  * Verification engines for sub-agents: demos use the app's own Electron
@@ -67,7 +68,7 @@ export interface HeadlessApi {
 	runDemo(html: string, opts?: RunDemoOptions): Promise<DemoRunResult>;
 	/** Rasterize an SVG to a PNG buffer (for verify-by-looking). */
 	renderSvg(svg: string, opts?: RenderSvgOptions): Promise<Buffer>;
-	/** Render PDF pages to PNGs natively (pdfjs + Skia) for the pdf-reader. */
+	/** Render PDF pages to PNGs natively (pdfjs + Skia; Android PdfRenderer) for the pdf-reader. */
 	renderPdfPages(pdfPath: string, pages: number[], opts?: RenderPdfOptions): Promise<RenderedPdfPage[]>;
 }
 
@@ -79,7 +80,15 @@ export function getHeadless(): HeadlessApi {
 	// Android app: demos run in an offscreen WebView via the Kotlin render service.
 	if (isAndroidServer()) {
 		const client = androidRenderClientFromEnv();
-		if (client) return createAndroidHeadless(client, realHeadless);
+		if (client) {
+			const api = createAndroidHeadless(client, realHeadless);
+			return {
+				...api,
+				// PdfRenderer's Bitmap PNGs get the same canonical single-IDAT form as Skia's.
+				renderPdfPages: async (pdfPath, pages, opts) =>
+					(await api.renderPdfPages(pdfPath, pages, opts)).map((p) => ({ ...p, png: providerSafePng(p.png) })),
+			};
+		}
 	}
 	return realHeadless;
 }
@@ -431,6 +440,9 @@ async function renderSvg(svg: string, opts: RenderSvgOptions = {}): Promise<Buff
 	// the ONLY path, so nothing regresses.
 	const { width } = svgViewport(svg, opts);
 	try {
+		// Android: prebuilt N-API addons cannot load in nodejs-mobile (and the
+		// failing dlopen is slow), so use the WASM build of the same engine.
+		if (isAndroidServer()) return providerSafePng(Buffer.from(await renderSvgWasm(svg, { width })));
 		const { Resvg } = await import("@resvg/resvg-js");
 		const resvg = new Resvg(svg, {
 			fitTo: { mode: "width", value: width },

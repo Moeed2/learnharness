@@ -82,6 +82,13 @@ object RenderService {
                         val png = runJob { svg(json) }
                         respond(s, 200, "image/png", png)
                     }
+                    "/pdf" -> try {
+                        val out = runJob { PdfPageRenderer.render(appContext, json) }
+                        respond(s, 200, "application/json", out.toString().toByteArray())
+                    } catch (e: PdfRenderException) {
+                        val body = JSONObject().put("error", e.message).put("code", e.code)
+                        respond(s, 422, "application/json", body.toString().toByteArray())
+                    }
                     else -> respond(s, 404, "application/json", err("not found"))
                 }
             } catch (e: Exception) {
@@ -162,7 +169,7 @@ object RenderService {
     }
 
     private fun respond(s: Socket, status: Int, type: String, body: ByteArray) {
-        val reason = when (status) { 200 -> "OK"; 400 -> "Bad Request"; 401 -> "Unauthorized"; 404 -> "Not Found"; 405 -> "Method Not Allowed"; else -> "Error" }
+        val reason = when (status) { 200 -> "OK"; 400 -> "Bad Request"; 401 -> "Unauthorized"; 404 -> "Not Found"; 422 -> "Unprocessable Entity"; 405 -> "Method Not Allowed"; else -> "Error" }
         val out = s.getOutputStream()
         out.write("HTTP/1.1 $status $reason\r\nContent-Type: $type\r\nContent-Length: ${body.size}\r\nConnection: close\r\n\r\n".toByteArray(Charsets.ISO_8859_1))
         out.write(body)
