@@ -74,7 +74,7 @@ class FileChooser(private val activity: Activity) {
         const val REQ_CHOOSER = 41001
 
         /**
-         * accept="" entries are MIME types ("image/*") or extensions (".md").
+         * accept="" entries are MIME types ("image/png", "image/…") or extensions (".md").
          * DocumentsUI filters by MIME only, and ".md" has no registered type, so
          * any unmappable entry widens the filter to everything (wide but correct).
          */
