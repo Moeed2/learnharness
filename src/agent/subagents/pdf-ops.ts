@@ -1,5 +1,7 @@
 import * as fs from "node:fs/promises";
+import * as os from "node:os";
 import * as path from "node:path";
+import { isAndroidServer } from "../../../lib/platform.ts";
 import { fileURLToPath } from "node:url";
 import { documentToMarkdown, type PdfPage } from "./pdf-markdown.ts";
 
@@ -264,5 +266,5 @@ export function renderDir(filePath: string): string {
 		h ^= abs.charCodeAt(i);
 		h = Math.imul(h, 0x01000193) >>> 0;
 	}
-	return path.join("/tmp", `lh-pdf-${h.toString(16).padStart(8, "0")}`);
+	return path.join(isAndroidServer() ? os.tmpdir() : "/tmp", `lh-pdf-${h.toString(16).padStart(8, "0")}`);
 }

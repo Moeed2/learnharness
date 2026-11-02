@@ -142,6 +142,7 @@ class MainActivity : Activity() {
         if (wv.parent == null) {
             root.addView(wv, 0, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         }
+        ApiGuard.installCookie(origin) // /api requires this cookie (see ApiGuard)
         wv.loadUrl("$origin/")
     }
 
