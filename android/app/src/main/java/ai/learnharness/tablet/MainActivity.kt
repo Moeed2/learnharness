@@ -213,6 +213,7 @@ class MainActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
+        RenderHost.attach(window.decorView as ViewGroup) // step 5: window for offscreen render WebViews
         webView?.onResume()
         val port = ServerState.port
         if (screen == Screen.WEB && port > 0) {
@@ -225,6 +226,7 @@ class MainActivity : Activity() {
     }
 
     override fun onPause() {
+        RenderHost.detach(window.decorView as ViewGroup)
         webView?.onPause()
         super.onPause()
     }

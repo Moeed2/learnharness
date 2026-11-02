@@ -95,3 +95,26 @@ Local build (on a machine with the Android SDK/NDK): run steps 1-3 above, then
   measures; the app works without them (PDF page rendering / SVG rasterisation will fail lazily).
 * Android may kill the process under memory pressure; there is no in-process Node restart.
 * `x86_64` is shipped only so the CI emulator can run the app; real devices use `arm64-v8a`.
+
+## Render service (step 5: demo verification)
+
+Android has no Chrome/CDP, so sub-agent demo verification (`run_demo`) runs in an offscreen system
+WebView owned by the Kotlin shell.
+
+* `RenderService.kt`: hand-rolled HTTP/1.1 server on `127.0.0.1:<random port>`, started by `NodeService`
+  **before** Node. Node gets `LH_ANDROID_RENDER_URL` and `LH_ANDROID_RENDER_TOKEN` (random 256-bit hex).
+  Every request needs `Authorization: Bearer <token>` (401 otherwise). Only `POST`, JSON bodies up to 16 MB.
+  Jobs run one at a time.
+* `OffscreenWebView.kt`: one throwaway WebView per job with a real fixed layout (CSS viewport = width x height),
+  placed behind the UI with alpha 0.01 when the activity is resumed (`RenderHost`, set in `MainActivity.onResume`),
+  always destroyed, with hard timeouts.
+* `POST /demo` `{html | url, settleMs=2000, probe?, width=1024, height=768, screenshot?}` returns JSON
+  `{consoleErrors[], pageErrors[], failedRequests[], probeResult?, ok, screenshotPng? (base64)}`.
+  HTML loads with base URL `https://learnharness-demo.invalid/`. "Uncaught ..." console errors (exceptions and
+  unhandled rejections) go to `pageErrors`, other console errors to `consoleErrors`; subresource load errors and
+  HTTP >= 400 go to `failedRequests`. The probe is evaluated after settle (global eval, promises awaited, 10 s cap).
+* `POST /svg` `{svg, width=900, height=700}` returns `image/png` (white page, WebView draw into a Bitmap).
+  Node uses it only when resvg fails.
+* Errors: non-200 with `{"error": "..."}`.
+* Node client: `src/agent/subagents/headless-android.ts`; `getHeadless()` returns it when `LH_ANDROID=1` and both
+  env vars exist (`available()` is then always true). PDF pages still use pdfjs + canvas.

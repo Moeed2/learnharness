@@ -3,6 +3,8 @@ import { createRequire } from "node:module";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { isAndroidServer } from "../../../lib/platform";
+import { androidRenderClientFromEnv, createAndroidHeadless } from "./headless-android";
 import { standardFontsDir } from "./pdf-ops";
 
 /**
@@ -73,7 +75,13 @@ export interface HeadlessApi {
 export const headlessOverride: { current?: HeadlessApi } = {};
 
 export function getHeadless(): HeadlessApi {
-	return headlessOverride.current ?? realHeadless;
+	if (headlessOverride.current) return headlessOverride.current;
+	// Android app: demos run in an offscreen WebView via the Kotlin render service.
+	if (isAndroidServer()) {
+		const client = androidRenderClientFromEnv();
+		if (client) return createAndroidHeadless(client, realHeadless);
+	}
+	return realHeadless;
 }
 
 // ─── Chrome resolution ───────────────────────────────────────────────────────
@@ -432,6 +440,11 @@ async function renderSvg(svg: string, opts: RenderSvgOptions = {}): Promise<Buff
 		return providerSafePng(resvg.render().asPng());
 	} catch {
 		/* fall through to the browser path */
+	}
+	// Android: no Chrome/CDP — the app's WebView render service is the fallback.
+	if (isAndroidServer()) {
+		const client = androidRenderClientFromEnv();
+		if (client) return providerSafePng(await client.renderSvg(svg, opts));
 	}
 	const dir = tempDir("lh-visual-");
 	const file = path.join(dir, "figure.html");

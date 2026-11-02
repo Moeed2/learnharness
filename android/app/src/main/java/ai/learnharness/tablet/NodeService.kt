@@ -66,6 +66,8 @@ class NodeService : Service() {
             val dataDir = File(filesDir, "data").apply { mkdirs() }
             val homeDir = File(filesDir, "home").apply { mkdirs() }
             val port = freeLoopbackPort()
+            // Step 5: render service (demo verification) must be up before Node starts.
+            val (renderUrl, renderToken) = RenderService.start(this)
             ServerState.setPort(port)
 
             val env = mapOf(
@@ -78,6 +80,8 @@ class NodeService : Service() {
                 "LH_DATA_DIR" to dataDir.path,
                 "LH_AUTH_FILE" to File(filesDir, "auth.json").path,
                 "NEXT_TELEMETRY_DISABLED" to "1",
+                "LH_ANDROID_RENDER_URL" to renderUrl,
+                "LH_ANDROID_RENDER_TOKEN" to renderToken,
                 // Read by lh-diagnostics.mjs (step-1 spike).
                 "LH_DIAGNOSTICS_FILE" to File(filesDir, "diagnostics.json").path,
                 // NOTE: LH_DESKTOP_SERVER / LH_DESKTOP_API_SECRET are deliberately NOT
