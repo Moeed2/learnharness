@@ -1,5 +1,6 @@
 "use client";
 
+import { isTouchDevice } from "@/lib/touch";
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import { createPortal } from "react-dom";
 
@@ -148,7 +149,7 @@ export function MenuShell({
 		const el = menuRef.current;
 		if (!el) return;
 		const input = el.querySelector<HTMLElement>("input");
-		(input ?? el).focus();
+		(isTouchDevice() ? el : (input ?? el)).focus(); // touch: keep the soft keyboard down
 	}, [placed]);
 
 	// The standard arrow machine for menus WITHOUT a search (owner: when a

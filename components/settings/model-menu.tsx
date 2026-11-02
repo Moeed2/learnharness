@@ -19,6 +19,7 @@
  * menu is open.
  */
 
+import { isTouchDevice } from "@/lib/touch";
 import { useEffect, useRef, useState } from "react";
 import type { ModelCatalogEntry } from "@/src/core";
 import { CLAUDE_CODE_PROVIDER, CUSTOM_PROVIDER, fuzzyScore, subscriptionLabel } from "@/src/core";
@@ -163,7 +164,7 @@ export function ProviderMenuList({
 	const listRef = useRef<HTMLUListElement>(null);
 
 	useEffect(() => {
-		searchRef.current?.focus();
+		if (!isTouchDevice()) searchRef.current?.focus();
 	}, []);
 
 	useEffect(() => {
@@ -293,7 +294,7 @@ export function FontMenuList({
 	const listRef = useRef<HTMLUListElement>(null);
 
 	useEffect(() => {
-		searchRef.current?.focus();
+		if (!isTouchDevice()) searchRef.current?.focus();
 	}, []);
 
 	useEffect(() => {

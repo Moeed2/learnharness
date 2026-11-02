@@ -55,6 +55,7 @@ import { select } from "d3-selection";
 import { zoom, zoomIdentity, type ZoomBehavior, type ZoomTransform } from "d3-zoom";
 import type { Simulation, SimulationLinkDatum } from "d3-force";
 import { clusterHue, type Pt } from "./cluster-geometry.ts";
+import { createLongPress } from "../lib/long-press.ts";
 import {
 	CHARGE_STRENGTH,
 	CLUSTER_PULL_STRENGTH,
@@ -691,6 +692,7 @@ export class GraphCanvasRenderer {
 		canvas.addEventListener("pointermove", this.onPointerMove);
 		canvas.addEventListener("pointerdown", this.onPointerDown);
 		canvas.addEventListener("pointerup", this.onPointerUp);
+		canvas.addEventListener("pointercancel", this.onPointerCancel);
 		canvas.addEventListener("pointerleave", this.onPointerLeave);
 		// Right-click → the caller's context menu (node interlude). Always
 		// preventDefault: the native menu on a full-bleed custom canvas is
@@ -905,6 +907,8 @@ export class GraphCanvasRenderer {
 		this.canvas.removeEventListener("pointermove", this.onPointerMove);
 		this.canvas.removeEventListener("pointerdown", this.onPointerDown);
 		this.canvas.removeEventListener("pointerup", this.onPointerUp);
+		this.canvas.removeEventListener("pointercancel", this.onPointerCancel);
+		this.longPress.cancel();
 		this.canvas.removeEventListener("pointerleave", this.onPointerLeave);
 		this.canvas.removeEventListener("contextmenu", this.onContextMenu);
 		this.canvas.style.cursor = "";
@@ -927,7 +931,40 @@ export class GraphCanvasRenderer {
 		this.markDirty();
 	};
 
+	/** Touch long-press on a node = the right-click menu (the canvas is
+	 *  touch-none with pointer capture, so no native contextmenu is relied on). */
+	private lpPos: Pt | null = null;
+	private lpPointerId = -1;
+	private longPress = createLongPress(() => {
+		const pos = this.lpPos;
+		if (!pos || this.simActive) return;
+		const node = this.pickAt(pos.x, pos.y);
+		if (!node) return;
+		// Abandon the pending node press so pointerup is not a select/drag.
+		if (this.dragId) {
+			const n = this.simById.get(this.dragId);
+			if (n) {
+				n.fx = null;
+				n.fy = null;
+			}
+			this.dragId = null;
+			this.dragOrigin = null;
+			try {
+				this.canvas.releasePointerCapture(this.lpPointerId);
+			} catch {
+				/* already released */
+			}
+			this.canvas.style.cursor = "";
+			this.markDirty();
+		}
+		this.downPos = null;
+		this.callbacks.onContext(node.id, pos);
+	});
+
+	private onPointerCancel = () => this.longPress.cancel();
+
 	private onPointerMove = (e: PointerEvent) => {
+		if (e.pointerType === "touch") this.longPress.move(e.clientX, e.clientY);
 		const pos = this.eventPos(e);
 		if (this.dragId) {
 			const n = this.simById.get(this.dragId);
@@ -963,6 +1000,11 @@ export class GraphCanvasRenderer {
 		// used to open under the menu).
 		if (e.button !== 0) return;
 		const pos = this.eventPos(e);
+		if (e.pointerType === "touch" && e.isPrimary) {
+			this.lpPos = pos;
+			this.lpPointerId = e.pointerId;
+			this.longPress.start(e.clientX, e.clientY);
+		}
 		const node = this.pickAt(pos.x, pos.y);
 		if (node && this.sim) {
 			// Node press: pin the node (at ITS OWN position — the cursor
@@ -993,6 +1035,8 @@ export class GraphCanvasRenderer {
 
 	private onPointerUp = (e: PointerEvent) => {
 		if (e.button !== 0) return; // right-click is context-menu territory
+		this.longPress.end();
+		if (e.pointerType === "touch" && this.longPress.consumeFired()) return; // menu already opened
 		// Node press ending: click (no slop) → select; drag → release-and-relax.
 		if (this.dragId) {
 			const id = this.dragId;

@@ -76,3 +76,23 @@ export function useEnterSubmits(submit: () => void): void {
 		return () => window.removeEventListener("keydown", onKey);
 	}, []);
 }
+
+/**
+ * Enter in a multi-line answer field: does it SEND or insert a newline?
+ * Desktop (and a hardware keyboard on a tablet): Enter sends, Shift+Enter is
+ * a newline, Cmd/Ctrl+Enter also sends. A soft keyboard has no Shift+Enter,
+ * so on a touch device its Enter key inserts a newline and the Send button
+ * sends (mobile chat convention). Soft keys report an empty `code`, a
+ * hardware Enter reports "Enter"/"NumpadEnter", which keeps hardware
+ * keyboards on the desktop behavior.
+ */
+export function enterAction(
+	e: Pick<KeyboardEvent, "key" | "code" | "shiftKey" | "metaKey" | "ctrlKey">,
+	touch: boolean,
+): "send" | "newline" | "none" {
+	if (e.key !== "Enter") return "none";
+	if (e.metaKey || e.ctrlKey) return "send";
+	if (e.shiftKey) return "newline";
+	if (touch && e.code !== "Enter" && e.code !== "NumpadEnter") return "newline";
+	return "send";
+}

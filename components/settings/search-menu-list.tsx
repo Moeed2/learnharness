@@ -1,5 +1,6 @@
 "use client";
 
+import { isTouchDevice } from "@/lib/touch";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { fuzzyScore } from "@/src/core";
 
@@ -36,7 +37,7 @@ export function SearchMenuList<T>({
 	const searchRef = useRef<HTMLInputElement>(null);
 	const listRef = useRef<HTMLUListElement>(null);
 
-	useEffect(() => { searchRef.current?.focus(); }, []);
+	useEffect(() => { if (!isTouchDevice()) searchRef.current?.focus(); }, []);
 	useEffect(() => {
 		if (menuIdx === null) return;
 		listRef.current?.querySelector(`[data-idx="${menuIdx}"]`)?.scrollIntoView({ block: "nearest" });

@@ -166,7 +166,7 @@ function CheatSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
 			{...backdropDismiss}
 		>
 			<div
-				className="max-h-[80vh] w-full max-w-[36rem] overflow-y-auto rounded-xl border bg-card p-5 shadow-2xl"
+				className="max-h-[80dvh] w-full max-w-[36rem] overflow-y-auto rounded-xl border bg-card p-5 shadow-2xl"
 				onClick={(e) => e.stopPropagation()}
 			>
 				<div className="mb-4 flex items-baseline justify-between">
