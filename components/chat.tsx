@@ -1,5 +1,6 @@
 "use client";
 
+import { isTouchDevice } from "@/lib/touch";
 import { createContext, Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useChatSession } from "@/components/session";
 import { visibleQueuedSteers } from "@/components/session-core";
@@ -61,6 +62,7 @@ import { PracticeDock } from "@/components/practice-dock";
 import { ThinkingCard, type PracticeThinkingData } from "@/components/practice-cards";
 import { GraphContextCard, type GraphContextData } from "@/components/graph-context-card";
 import { TopBar } from "@/components/top-bar";
+import { TouchActionsMenu } from "@/components/touch-actions-menu";
 import type { ArtifactPartProps, JobRecord, Phase3, QuestionAnswerData, QuestionFormDraft, TurnUsage, SessionPricing } from "@/src/core";
 import type { LhViewMessage } from "@/src/core";
 import { PhaseChip, PhaseDivider } from "@/components/phase-divider";
@@ -723,7 +725,7 @@ export function Chat({
 			dictationWasActiveRef.current = true;
 		} else if (dictationWasActiveRef.current) {
 			dictationWasActiveRef.current = false;
-			composerInputRef.current?.focus();
+			if (!isTouchDevice()) composerInputRef.current?.focus();
 		}
 	}, [dictation.active]);
 
@@ -1395,6 +1397,7 @@ export function Chat({
 					) : (
 						<PhaseChip phase={phases.at(-1) ?? "probe"} />
 					)}
+					<TouchActionsMenu />
 				</TopBar>
 
 				<SessionFind scopeRef={sessionFindScopeRef} scrollContextRef={scrollContextRef} />

@@ -36,6 +36,7 @@
  * CMU title, z-50.
  */
 
+import { isTouchDevice } from "@/lib/touch";
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useBackdropDismiss } from "@/components/backdrop-dismiss";
@@ -204,7 +205,7 @@ export function SetupKeysBody({
 								aria-label={`${provider.label} key`}
 								data-testid="setup-key-input"
 								disabled={saving}
-								autoFocus
+								autoFocus={!isTouchDevice()}
 								className="h-7 min-w-0 flex-1 rounded-sm border border-border bg-background px-1.5 font-mono text-xs text-foreground outline-none placeholder:text-muted-foreground/60 focus:border-muted-foreground/50"
 							/>
 							<button
@@ -457,7 +458,7 @@ function OpenSetupDialog({ onClose, onDone }: SetupDialogProps) {
 				aria-modal="true"
 				aria-label="Set up your models"
 				data-testid="setup-dialog"
-				className="settings-dialog-pop flex max-h-[85vh] w-[640px] max-w-[90vw] flex-col overflow-hidden rounded-md border border-border bg-card shadow-xl"
+				className="settings-dialog-pop flex max-h-[85dvh] w-[640px] max-w-[90vw] flex-col overflow-hidden rounded-md border border-border bg-card shadow-xl"
 				onClick={(e) => e.stopPropagation()}
 			>
 				<header className="flex h-15 shrink-0 items-center gap-3 border-b border-border px-5">

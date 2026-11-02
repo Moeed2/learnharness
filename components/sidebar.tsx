@@ -51,10 +51,14 @@ const STORAGE_KEY = "lh:sidebar-open";
 import type { ChatGPTControlBridge, NativeSubscriptionControlBridge } from "@/src/core";
 import type { UpdateState } from "@/components/settings/update-settings.tsx";
 import { FilePathDropZone } from "@/components/file-path-drop-zone";
+import { useLongPress } from "@/lib/long-press";
+import { isAndroidApp } from "@/lib/platform";
 const SIDEBAR_AUTOCLOSE = 928;
 
 // Module scope, guarded for SSR (the server has no navigator).
 const IS_ELECTRON = typeof navigator !== "undefined" && navigator.userAgent.includes("Electron");
+// The Android tablet app shares the narrow-window auto-close (no window to widen).
+const AUTOCLOSE_HOST = IS_ELECTRON || isAndroidApp();
 
 declare global {
 	interface Window {
@@ -140,7 +144,7 @@ export function SidebarProvider({ children }: { children: React.ReactNode }) {
 	// Both this and the mount effect land before the first paint, so a
 	// narrow window never flashes the open sidebar on load.
 	useEffect(() => {
-		if (!IS_ELECTRON) return; // plain-browser tabs open freely
+		if (!AUTOCLOSE_HOST) return; // plain-browser tabs open freely
 		const onResize = () => setNarrow(window.innerWidth < SIDEBAR_AUTOCLOSE);
 		onResize();
 		window.addEventListener("resize", onResize);
@@ -291,6 +295,7 @@ export function SessionRow({
 	onOpen,
 	kbdSelected = false,
 	onContextMenu,
+	onLongPress,
 }: {
 	chat: ChatListItem;
 	active: boolean;
@@ -300,12 +305,16 @@ export function SessionRow({
 	kbdSelected?: boolean;
 	/** Right-click opens the context menu (wave 6: Rename / Delete). */
 	onContextMenu?: (e: React.MouseEvent<HTMLButtonElement>) => void;
+	/** Touch long-press (~500 ms) opens the same menu as right-click. */
+	onLongPress?: (row: HTMLButtonElement) => void;
 }) {
+	const press = useLongPress<HTMLButtonElement>(onLongPress && ((el) => onLongPress(el)));
 	return (
 		<button
 			type="button"
 			onClick={onOpen}
 			onContextMenu={onContextMenu}
+			{...press}
 			data-testid={kbdSelected ? "session-row-kbd" : "session-row"}
 			className={cn(
 				"relative mb-0.5 flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left transition-colors hover:bg-accent",
@@ -833,6 +842,10 @@ function SessionsSidebar() {
 										router.push(`/chat/${c.id}`);
 									}}
 									onContextMenu={(e) => openContext(e, c)}
+									onLongPress={(el) => {
+										ctxAnchorRef.current = el;
+										setCtxChatId(c.id);
+									}}
 								/>
 							),
 						)

@@ -23,6 +23,7 @@
  * effect immediately. Plaintext never returns from the store.
  */
 
+import { isTouchDevice } from "@/lib/touch";
 import { useEffect, useRef, useState } from "react";
 import {
 	AUTH_KEYS,
@@ -218,7 +219,7 @@ function KeyTableRow({
 						aria-label={`${label} key`}
 						data-testid={`${testid}-input`}
 						disabled={busy}
-						autoFocus
+						autoFocus={!isTouchDevice()}
 						className="h-7 min-w-0 flex-1 rounded-sm border border-border bg-background px-1.5 font-mono text-xs text-foreground outline-none placeholder:text-muted-foreground/60 focus:border-muted-foreground/50"
 					/>
 					<button
@@ -641,7 +642,7 @@ function AddProviderEditor({
 				placeholder="Paste key…"
 				aria-label={`${provider.label} key`}
 				data-testid={`key-${provider.id}-input`}
-				autoFocus
+				autoFocus={!isTouchDevice()}
 				className="h-7 min-w-0 flex-1 rounded-sm border border-border bg-background px-1.5 font-mono text-xs text-foreground outline-none placeholder:text-muted-foreground/60 focus:border-muted-foreground/50"
 			/>
 			<button
@@ -887,7 +888,7 @@ function CustomEndpointEditor({
 					aria-label="Custom endpoint base URL"
 					data-testid="custom-baseurl-input"
 					disabled={busy}
-					autoFocus
+					autoFocus={!isTouchDevice()}
 					className="h-7 min-w-0 flex-1 rounded-sm border border-border bg-background px-1.5 font-mono text-xs text-foreground outline-none placeholder:text-muted-foreground/60 focus:border-muted-foreground/50"
 				/>
 			</div>

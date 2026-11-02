@@ -1,7 +1,10 @@
 "use client";
 
-import { createContext, useContext, useLayoutEffect, useRef, useState, type DragEvent, type HTMLAttributes, type ReactNode } from "react";
-import { ChevronRightIcon, FolderIcon, FolderOpenIcon } from "lucide-react";
+import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState, type DragEvent, type HTMLAttributes, type ReactNode } from "react";
+import { ChevronRightIcon, FolderIcon, FolderInputIcon, FolderOpenIcon } from "lucide-react";
+import { MenuShell } from "@/components/menu-shell";
+import { moveDestinations } from "@/components/source-move";
+import { useTouchDevice } from "@/lib/touch";
 import { canMoveFolder, folderIsEmpty, fuzzyScore, placementOf, folderEntryCheck, type SourceEntrySelection, type OrganizationAction, type SourceDirectory } from "@/src/core";
 import type { ChainSort } from "./chain-table";
 import { chainRow } from "./chain-navigation";
@@ -37,6 +40,50 @@ export function SourceDragRow({ kind, id, name, enabled, children, ...props }: H
 				requestAnimationFrame(() => preview.remove());
 			}}>{children}</div>
 	</RowEditing.Provider>;
+}
+
+/** Touch-only replacement for drag-and-drop: a "Move to…" button that opens a
+ * folder picker and sends the same `move` action the drop handler sends.
+ * Renders nothing on mouse devices, so desktop rows are unchanged. */
+export function MoveToControl({ kind, id, name, directory, onAction }: {
+	kind: "source" | "folder"; id: string; name: string; directory?: SourceDirectory; onAction?: OrganizationChange;
+}) {
+	const touch = useTouchDevice();
+	const [open, setOpen] = useState(false);
+	const anchor = useRef<HTMLButtonElement>(null);
+	useEffect(() => {
+		if (!open) return;
+		const onDown = (e: PointerEvent) => {
+			const t = e.target as Node;
+			if (t instanceof Element && t.closest("[data-lh-menu]")) return;
+			if (anchor.current?.contains(t)) return;
+			setOpen(false);
+		};
+		const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") { e.stopPropagation(); setOpen(false); } };
+		document.addEventListener("pointerdown", onDown);
+		document.addEventListener("keydown", onKey);
+		return () => { document.removeEventListener("pointerdown", onDown); document.removeEventListener("keydown", onKey); };
+	}, [open]);
+	if (!touch || !onAction || !directory) return null;
+	return <>
+		<button ref={anchor} type="button" data-testid={`move-to-${id}`} aria-label={`Move ${name} to a folder`} aria-expanded={open}
+			onClick={() => setOpen((o) => !o)}
+			className="flex size-6 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground">
+			<FolderInputIcon className="size-3.5" />
+		</button>
+		{open && <MenuShell anchorRef={anchor} testid="move-to-menu" preferredSide="down" align="right"
+			menuClass="flex w-60 flex-col gap-0.5 rounded-xl border bg-card p-2 text-xs shadow-xl">
+			<div className="px-2.5 py-1 text-muted-foreground">Move to…</div>
+			{moveDestinations(directory.organization, kind, id).map((d) => (
+				<button key={d.parentId ?? "top"} type="button" disabled={d.current} data-testid={`move-to-dest-${d.parentId ?? "top"}`}
+					onClick={() => { setOpen(false); void onAction({ action: "move", kind, id, parentId: d.parentId }).catch(() => {}); }}
+					style={{ paddingLeft: 10 + d.depth * 14 }}
+					className="flex items-center rounded-lg py-2 pr-2.5 text-left text-foreground transition-colors hover:bg-accent disabled:opacity-50 disabled:hover:bg-transparent">
+					<span className="truncate">{d.name}</span>
+				</button>
+			))}
+		</MenuShell>}
+	</>;
 }
 
 /** Source/folder names are also searchable, including sources without nodes. */
@@ -195,6 +242,7 @@ export function SourceFolderTree<T extends TreeSource>({ groups, directory, quer
 					</button>
 					{onAction ? <EditableSourceName name={folder.name} onSave={(name) => onAction({ action: "rename-folder", id: folder.id, name })} />
 						: <span className="min-w-0 flex-1 truncate text-sm font-medium">{folder.name}</span>}
+					<MoveToControl kind="folder" id={folder.id} name={folder.name} directory={directory} onAction={onAction} />
 					<span className="w-14 shrink-0 text-right text-xs tabular-nums text-muted-foreground">{members.length}</span>
 					<span className="w-20 shrink-0 text-right text-xs tabular-nums text-muted-foreground">{folder.createdAt.slice(0, 10)}</span>
 				</SourceDragRow>

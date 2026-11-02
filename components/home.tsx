@@ -1,5 +1,7 @@
 "use client";
 
+import { enterAction } from "@/components/enter-submits";
+import { isTouchDevice } from "@/lib/touch";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { CornerDownLeftIcon, DumbbellIcon } from "lucide-react";
@@ -82,7 +84,7 @@ export function Home({
 			dictationWasActiveRef.current = true;
 		} else if (dictationWasActiveRef.current) {
 			dictationWasActiveRef.current = false;
-			topicInputRef.current?.focus();
+			if (!isTouchDevice()) topicInputRef.current?.focus(); // no soft keyboard pop-up on touch
 		}
 	}, [dictation.active]);
 
@@ -267,13 +269,13 @@ export function Home({
 								dictation.cancel();
 								return;
 							}
-							if (e.key === "Enter" && !e.shiftKey) {
+							if (e.key === "Enter" && enterAction(e, isTouchDevice()) === "send") {
 								e.preventDefault();
 								void start();
 							}
 						}}
 						placeholder={mode === "practice" ? "What do you want to practice?" : "What do you want to learn?"}
-						autoFocus
+						autoFocus={!isTouchDevice()}
 						className="field-sizing-content lh-input max-h-48 min-h-10 flex-1 resize-none bg-transparent px-2.5 py-2 outline-none placeholder:text-muted-foreground"
 					/>
 					{/* No tooltip on the start square — the ↵ glyph is the
