@@ -74,6 +74,7 @@ class NodeService : Service() {
                 "NODE_ENV" to "production",
                 "HOME" to homeDir.path,
                 "TMPDIR" to cacheDir.path,
+                "LH_ANDROID" to "1",
                 "LH_DATA_DIR" to dataDir.path,
                 "LH_AUTH_FILE" to File(filesDir, "auth.json").path,
                 "NEXT_TELEMETRY_DISABLED" to "1",
