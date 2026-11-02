@@ -3,5 +3,5 @@
     <string name="app_name">LearnHarness</string>
     <string name="notification_channel">Local server</string>
     <string name="notification_title">LearnHarness is running</string>
-    <string name="notification_text">Local server active on this device</string>
+    <string name="notification_text">Keeps your study server and ChatGPT sign-in running</string>
 </resources>

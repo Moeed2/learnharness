@@ -147,3 +147,41 @@ Droid Sans Mono when present. If the WASM render fails, the WebView `POST /svg` 
   first and replaces it with a pure-JS approximation (server side only).
 - From PowerShell, quote Gradle properties with dots, e.g.
   `"-PndkVersion=27.3.13750724"`.
+
+## ChatGPT sign-in and keep-alive (step 3)
+
+Flow (the server runs in "web" mode, so `createChatGPT` lives inside the Node process):
+
+1. The Connect button uses the web bridge (`/api/subscriptions`). The shim defines
+   `window.lh.subscriptionTransport = "web"` and `window.lh.openSubscriptionBrowser(action)`, the same contract as
+   `electron/web-subscription-browser.cjs`, so `withBrowser()` in `components/settings/subscription-client.ts`
+   skips `window.open`. No other code branches on these members (`useChatGPTBridge` falls back to the web bridge
+   anyway because `window.lh.chatgpt` is never defined on Android).
+2. `LhSignIn.kt` POSTs the one-use `/api/subscriptions/browser?id=...` action with the `lh_android` cookie
+   (`ApiGuard`), `Origin` and `x-learnharness-subscriptions: 1`, does not follow the 303, accepts only
+   `https://auth.openai.com[:443]` without credentials, and opens it. It is a Custom Tab built by hand (VIEW intent with
+   the null `android.support.customtabs.extra.SESSION` binder, no `androidx.browser` dependency); browsers without
+   tab support (Huawei Browser) simply open a normal tab, so both paths work. No `NEW_TASK`, so a tab stays in
+   the app's task.
+3. OpenAI redirects to `http://127.0.0.1:<random>/auth/callback` (the loopback listener in Node). With `LH_ANDROID=1`
+   only, `electron/chatgpt-callback.cjs` answers with a small HTML page: meta refresh + nonce script to
+   `learnharness://auth-done?status=ok|error` and a visible "Return to LearnHarness" button (CSP
+   `default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-...'`). The desktop answer is unchanged
+   (plain text, `default-src 'none'`). `status` only says whether the provider returned an error; the real result
+   arrives over SSE `subscriptions-changed`.
+4. `MainActivity` (singleTask) has a `learnharness://auth-done` intent filter; `onNewIntent` brings the app forward
+   (this also closes a Custom Tab on top of it). Some browsers block custom-scheme redirects without a tap; the
+   button is the fallback.
+
+Keep-alive and recovery:
+
+* `NodeService` is a foreground service (`specialUse`) and now returns `START_STICKY`; the notification says it
+  keeps the study server and sign-in running. A wake lock is not used: sign-in happens with the screen on. If a
+  vendor battery manager still kills the app, set LearnHarness to "no restrictions" / allow background activity.
+* Killed process: a relaunch starts a fresh server. `LhSession.cleanStaleTemp` removes leftover `*.tmp` / `*.tmp-*`
+  files in `filesDir` and `filesDir/data` (the server has no lock or pid files). An in-flight sign-in (180 s,
+  in memory) is lost and must be restarted.
+* The last app page (path + query, never `/api`, `/auth`, `/_next`) is saved in SharedPreferences
+  (`doUpdateVisitedHistory`, so SPA navigation counts) and loaded on the next start.
+* Token refresh runs inside the server (`credential()`); the web path never touches `process.send`.
+  On Android the credentials directory fsync is best-effort (`LH_ANDROID=1`).
