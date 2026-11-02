@@ -37,6 +37,7 @@
  */
 
 import { useEffect, useRef, useState } from "react";
+import { useIsAndroidApp } from "@/lib/use-android-app";
 import { createPortal } from "react-dom";
 import { useBackdropDismiss } from "@/components/backdrop-dismiss";
 import type React from "react";
@@ -158,12 +159,14 @@ export function SetupKeysBody({
 	isCustom?: boolean;
 	onCustomSaved?: () => void;
 }) {
+	// Android app: ChatGPT is the only provider, so first run goes straight to connecting it.
+	const android = useIsAndroidApp();
 	return (
 		<div className="flex flex-col gap-3 px-6 py-5" data-testid="setup-stage-keys">
 			<p className="text-xs text-muted-foreground">
-				Choose your AI provider and paste its API key. You’ll pick your models next.
+				{android ? "Connect your ChatGPT subscription. You’ll pick your models next." : "Choose your AI provider and paste its API key. You’ll pick your models next."}
 			</p>
-			<div className="flex flex-col gap-2">
+			{!android && <div className="flex flex-col gap-2">
 				<div ref={menuAnchor} className="relative max-w-96">
 					<button
 						type="button"
@@ -224,8 +227,8 @@ export function SetupKeysBody({
 						{error}
 					</p>
 				)}
-			</div>
-			<div className="mt-2 border-t border-border/60 pt-4"><h3 className="mb-3 font-ui text-xs text-muted-foreground">Subscriptions</h3><SubscriptionConnections setup /></div>
+			</div>}
+			<div className={android ? "" : "mt-2 border-t border-border/60 pt-4"}><h3 className="mb-3 font-ui text-xs text-muted-foreground">Subscriptions</h3><SubscriptionConnections setup /></div>
 		</div>
 	);
 }

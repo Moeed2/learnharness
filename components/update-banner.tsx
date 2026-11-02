@@ -12,13 +12,15 @@
  */
 
 import { useState } from "react";
+import { useIsAndroidApp } from "@/lib/use-android-app";
 import { XIcon } from "lucide-react";
 import { useUpdateState } from "@/components/settings/update-settings.tsx";
 
 export default function UpdateBanner() {
 	const { state: ready } = useUpdateState();
+	const android = useIsAndroidApp(); // the Android app updates through its own channel
 	const [dismissedVersion, setDismissedVersion] = useState<string | null>();
-	if (ready?.status !== "downloaded" || ready.version === dismissedVersion) return null;
+	if (android || ready?.status !== "downloaded" || ready.version === dismissedVersion) return null;
 	return (
 		<div
 			data-testid="update-banner"
