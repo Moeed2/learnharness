@@ -29,10 +29,16 @@ REPO="${LIBNODE_REPO:-digidem/nodejs-mobile}"
 FLAVOR="${LIBNODE_FLAVOR:-full}"
 ABIS=(arm64-v8a x86_64)
 
-# TODO(pin): after the first successful CI run, copy the "computed sha256"
-# line from the log into PINNED_SHA256 below (or set LIBNODE_SHA256). Until
-# then the hash is only printed, not enforced.
+# Pinned release asset for the default tag (verified 2026-11-02 against the
+# GitHub release digest). Override with LIBNODE_URL/LIBNODE_SHA256 for other tags.
+PINNED_ASSET="nodejs-mobile-android-24.20.0-0.zip"
 PINNED_SHA256=""
+if [[ "$TAG" == "v24.20.0-0" && "$FLAVOR" == full ]]; then
+  PINNED_SHA256="f5ffbaf4f2679fa9180b0758c637c2f8fc8828300f95129badf213a028fb37bb"
+  if [[ -z "${LIBNODE_URL:-}" && -z "${LIBNODE_ASSET:-}" ]]; then
+    LIBNODE_URL="https://github.com/$REPO/releases/download/$TAG/$PINNED_ASSET"
+  fi
+fi
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 out="$(cd "$here/../../android" && pwd)/libnode"
