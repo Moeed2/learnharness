@@ -20,6 +20,7 @@ import {
   validateMeta,
   validateRevision,
 } from "./local.ts";
+import { mergeWorkspace } from "./merge.ts";
 interface Baseline {
   hash: string;
   heads: string[];
@@ -29,6 +30,8 @@ interface State {
   baseline: Record<string, Baseline>;
   pending: Revision[];
   pendingBlob?: Revision;
+  /** A workspace merge persisted before upload; never a local edit. */
+  pendingMerge?: Revision;
 }
 const flights = new Map<string, Promise<SyncResult>>();
 export class SyncEngine {
@@ -168,6 +171,7 @@ export class SyncEngine {
     for (const r of [
       ...state.pending,
       ...(state.pendingBlob ? [state.pendingBlob] : []),
+      ...(state.pendingMerge ? [state.pendingMerge] : []),
     ]) {
       validateRevision(r, r.meta);
       const m = metas.get(r.meta.id);
@@ -210,6 +214,27 @@ export class SyncEngine {
     };
     if (state.pendingBlob) {
       await publishBlob(state.pendingBlob);
+      if (!unchanged()) {
+        result.deferred = true;
+        return result;
+      }
+    }
+    const publishMerge = async (revision: Revision) => {
+      validateRevision(revision, revision.meta);
+      state.pendingMerge = revision;
+      atomicJSON(stateFile, state);
+      if (!listed.some((m) => m.id === revision.meta.id)) {
+        await o.remote.upload(revision);
+        result.uploaded++;
+        listed = [...listed, revision.meta];
+      }
+      metas.set(revision.meta.id, revision.meta);
+      delete state.pendingMerge;
+      atomicJSON(stateFile, state);
+    };
+    // A crash after persisting a merge: publish it, then it is just the head.
+    if (state.pendingMerge) {
+      await publishMerge(state.pendingMerge);
       if (!unchanged()) {
         result.deferred = true;
         return result;
@@ -381,6 +406,64 @@ export class SyncEngine {
       result.deferred = true;
       return result;
     }
+    // Concurrent workspace heads are merged (learning progress must not be
+    // pushed out of the active map); other units keep winner + conflict copies.
+    const merged = new Set<string>();
+    const ws = selected.get("workspace");
+    if (ws && ws.heads.length > 1) {
+      const ancestors = (m: RevisionMeta) => {
+        const out = new Set<string>(),
+          todo = [...m.parents];
+        while (todo.length) {
+          const id = todo.pop()!;
+          if (out.has(id)) continue;
+          out.add(id);
+          todo.push(...metas.get(id)!.parents);
+        }
+        return out;
+      };
+      const sets = ws.heads.map(ancestors);
+      const common = [...sets[0]!].filter((id) => sets.every((x) => x.has(id)));
+      const shadowed = new Set(
+        common.flatMap((id) => [...ancestors(metas.get(id)!)]),
+      );
+      const lca = common
+        .filter((id) => !shadowed.has(id))
+        .sort()
+        .at(-1);
+      const base = lca ? (await get(metas.get(lca)!)).files : null;
+      const files = mergeWorkspace(
+        base,
+        ws.heads.map((m) => cache.get(m.id)!.files),
+      );
+      const hash = filesHash(files);
+      const equal = ws.heads.find((m) => m.hash === hash);
+      if (equal) {
+        ws.winner = equal;
+        merged.add("workspace");
+      } else {
+        const revision: Revision = {
+          meta: {
+            id: randomUUID(),
+            unit: "workspace",
+            parents: ws.heads.map((m) => m.id),
+            deleted: false,
+            hash,
+          },
+          files,
+        };
+        await publishMerge(revision);
+        cache.set(revision.meta.id, revision);
+        selected.set("workspace", {
+          heads: [revision.meta],
+          winner: revision.meta,
+        });
+        if (!unchanged()) {
+          result.deferred = true;
+          return result;
+        }
+      }
+    }
     const ordered = [...selected.entries()].sort(
       ([a], [b]) =>
         Number(!a.startsWith("documents/blobs/")) -
@@ -389,7 +472,7 @@ export class SyncEngine {
     const changed: string[] = [];
     for (const [unit, { heads, winner }] of ordered) {
       const r = cache.get(winner.id)!;
-      for (const loser of heads.slice(0, -1)) {
+      for (const loser of merged.has(unit) ? [] : heads.slice(0, -1)) {
         const conflict = safePath(
           o.stateDir,
           "conflicts/" + loser.id + ".json",
