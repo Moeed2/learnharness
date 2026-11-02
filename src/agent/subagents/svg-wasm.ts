@@ -118,9 +118,14 @@ let wasmReady: Promise<ResvgModule> | null = null;
 
 function loadResvgWasm(): Promise<ResvgModule> {
 	wasmReady ??= (async () => {
-		const mod = await import("@resvg/resvg-wasm");
-		const wasmPath = createRequire(import.meta.url).resolve("@resvg/resvg-wasm/index_bg.wasm");
-		await mod.initWasm(fs.readFileSync(wasmPath));
+		// Resolved at runtime from the server root (cwd) and hidden from the
+		// bundler: Turbopack otherwise bundles index_bg.wasm as an ES module
+		// and fails on its "wbg" import. build-payload.mjs ships the package.
+		const pkg = ["@resvg", "resvg-wasm"].join("/");
+		const req = createRequire(path.join(process.cwd(), "package.json"));
+		const entry = req.resolve(pkg);
+		const mod = req(entry) as ResvgModule;
+		await mod.initWasm(fs.readFileSync(path.join(path.dirname(entry), "index_bg.wasm")));
 		return mod;
 	})().catch((e) => {
 		wasmReady = null; // allow a retry after a transient failure

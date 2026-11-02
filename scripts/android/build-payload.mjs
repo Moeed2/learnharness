@@ -42,6 +42,15 @@ if (!fs.existsSync(path.join(STANDALONE, ".next", "static"))) die(".next/standal
 fs.rmSync(STAGING, { recursive: true, force: true });
 fs.cpSync(STANDALONE, STAGING, { recursive: true, dereference: true });
 log(`staged ${STANDALONE} -> ${STAGING}`);
+// Next's tracer can sweep repo-root build dirs into the standalone tree
+// (android/ incl. a previous server.zip, local device-run logs). Never ship them.
+for (const junk of ["android", "device-run", "dist"]) {
+	const p = path.join(STAGING, junk);
+	if (fs.existsSync(p)) {
+		fs.rmSync(p, { recursive: true, force: true });
+		log(`  removed traced ${junk}/ from payload`);
+	}
+}
 
 // ---- 2. android addons from the lockfile -------------------------------------
 const lock = JSON.parse(fs.readFileSync(path.join(ROOT, "package-lock.json"), "utf8"));
