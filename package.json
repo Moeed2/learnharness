@@ -30,6 +30,7 @@
 		"@mozilla/readability": "^0.6.0",
 		"@radix-ui/react-use-controllable-state": "^1.2.6",
 		"@resvg/resvg-js": "^2.6.2",
+		"@resvg/resvg-wasm": "^2.6.2",
 		"@rive-app/react-webgl2": "^4.32.1",
 		"@silvia-odwyer/photon-node": "0.3.4",
 		"@streamdown/cjk": "^1.0.3",

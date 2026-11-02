@@ -5,9 +5,13 @@
  *   node scripts/android/build-payload.mjs
  *
  * 1. copies .next/standalone into android/.payload-staging (dereferencing links)
- * 2. installs the android-arm64 N-API addons (@napi-rs/canvas, @resvg/resvg-js)
- *    at the exact versions pinned in package-lock.json, straight from the npm
- *    registry tarballs (integrity-checked; works on any host OS)
+ * 2. adds @resvg/resvg-wasm (SVG rasterisation on Android; the desktop build does
+ *    not trace it) and, ONLY with LH_ANDROID_ADDONS=1, the android-arm64 N-API
+ *    addons (@napi-rs/canvas, @resvg/resvg-js) at the versions pinned in
+ *    package-lock.json, from the npm registry tarballs (integrity-checked).
+ *    The addons fail to load in nodejs-mobile (they do not link libnode.so), and
+ *    nothing uses them any more (SVG = resvg-wasm, PDF pages = PdfRenderer), so
+ *    they are left out by default to shrink the APK. Re-add: LH_ANDROID_ADDONS=1.
  * 3. prunes host-only native binaries (linux/darwin/win32 addons, sharp's libvips)
  * 4. adds lh-diagnostics.mjs and payload-version.txt
  * 5. zips to android/app/src/main/assets/server.zip (payload-version.txt FIRST,
@@ -24,7 +28,9 @@ const ROOT = path.resolve(import.meta.dirname, "..", "..");
 const STANDALONE = path.join(ROOT, ".next", "standalone");
 const STAGING = path.join(ROOT, "android", ".payload-staging");
 const OUT_ZIP = path.join(ROOT, "android", "app", "src", "main", "assets", "server.zip");
-const ANDROID_ADDONS = ["@napi-rs/canvas-android-arm64", "@resvg/resvg-js-android-arm64"];
+const ANDROID_ADDONS = process.env.LH_ANDROID_ADDONS === "1"
+	? ["@napi-rs/canvas-android-arm64", "@resvg/resvg-js-android-arm64"]
+	: [];
 
 const log = (m) => console.log(`[android-payload] ${m}`);
 const die = (m) => { console.error(`[android-payload] ${m}`); process.exit(1); };
@@ -90,6 +96,16 @@ for (const pkg of ANDROID_ADDONS) {
 		files++;
 	}
 	log(`  extracted ${files} files -> node_modules/${pkg}`);
+}
+
+// resvg-wasm is pure JS + one .wasm file; copy it verbatim from the build's node_modules.
+{
+	const src = path.join(ROOT, "node_modules", "@resvg", "resvg-wasm");
+	if (!fs.existsSync(path.join(src, "index_bg.wasm"))) die("node_modules/@resvg/resvg-wasm missing: run npm ci first.");
+	const dest = path.join(STAGING, "node_modules", "@resvg", "resvg-wasm");
+	fs.rmSync(dest, { recursive: true, force: true });
+	fs.cpSync(src, dest, { recursive: true, dereference: true });
+	log("  added node_modules/@resvg/resvg-wasm");
 }
 
 // ---- 3. prune host-only binaries ------------------------------------------------
