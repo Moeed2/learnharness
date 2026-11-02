@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { safeSyncConnectUrl, useSync, type SyncStatus } from "../sync-coordinator";
+import { safeGoogleSignInUrl, safeSyncConnectUrl, useSync, type SyncStatus } from "../sync-coordinator";
 import { SettingsGroup } from "./controls";
 
 const buttonClass = "rounded-sm border border-border bg-background px-3 py-1.5 text-xs transition-colors hover:bg-accent disabled:cursor-not-allowed disabled:opacity-40";
@@ -16,6 +16,8 @@ type DocumentItem = ExportItem & { size: number; mimeType: string };
 export function SyncSection() {
  const { status, busy, error, refresh, action } = useSync();
  const [relayUrl, setRelayUrl] = useState("");
+ const [clientId, setClientId] = useState("");
+ const [clientSecret, setClientSecret] = useState("");
  const [connectUrl, setConnectUrl] = useState<string | null>(null);
  const [localError, setLocalError] = useState<string | null>(null);
  const [later, setLater] = useState(false);
@@ -56,13 +58,18 @@ export function SyncSection() {
    await action("configure", url.href);
   } catch { setLocalError("Enter the HTTPS address of your Google sign-in relay."); }
  }
+async function saveClient() {
+  setLocalError(null);
+  if (await action("configure", { clientId: clientId.trim(), clientSecret: clientSecret.trim() })) { setClientSecret(""); setClientId(""); }
+ }
  async function connect() {
   setLocalError(null); setConnectUrl(null);
   const result = await action("connect");
   if (!result) return;
-  const url = safeSyncConnectUrl(result.url, status?.relayUrl, window.location.origin);
+  const local = status?.mode === "local" || (status?.mode !== "relay" && !status?.relayUrl);
+  const url = local ? safeGoogleSignInUrl(result.url) : safeSyncConnectUrl(result.url, status?.relayUrl, window.location.origin);
   if (url) setConnectUrl(url);
-  else setLocalError("The sign-in address did not match your configured relay. Check your relay setup and try again.");
+  else setLocalError(local ? "The sign-in address was not a Google address. Try again." : "The sign-in address did not match your configured relay. Check your relay setup and try again.");
  }
  async function restore(id: string) {
   setLocalError(null); setRestored(false);
@@ -78,12 +85,24 @@ export function SyncSection() {
     {status.lastSyncedAt && <p className="text-muted-foreground">Last synced: {new Date(status.lastSyncedAt).toLocaleString()}</p>}
    </div>
    {!status.configured ? <SettingsGroup label="Google Drive setup">
-    <p className="leading-relaxed text-muted-foreground">When you are ready, set up a Google Cloud OAuth app and an HTTPS sign-in relay, then paste its address here. Use the same relay on desktop and Android. You can set up later and keep learning offline.</p>
-    {later ? <button type="button" className={buttonClass} onClick={() => setLater(false)}>Set up sync</button> : <form className="flex flex-col gap-2" onSubmit={event => { event.preventDefault(); void configure(); }}>
-     <label htmlFor="sync-relay-url">Sign-in relay URL</label>
-     <input id="sync-relay-url" type="url" required placeholder="https://your-relay.example" value={relayUrl} onChange={event => setRelayUrl(event.target.value)} className="min-w-0 rounded-sm border border-border bg-background px-2 py-1.5 text-xs" />
-     <div className="flex flex-wrap gap-2"><button type="submit" disabled={busy} className={buttonClass}>Save relay</button><button type="button" className={buttonClass} onClick={() => setLater(true)}>Set up later</button></div>
-    </form>}
+    <p className="leading-relaxed text-muted-foreground">Create a free Google Cloud OAuth client of type <strong>Desktop app</strong> and paste its client ID and secret here (see docs/google-drive-sync.md). Use the same client on desktop and Android. You can set up later and keep learning offline.</p>
+    {later ? <button type="button" className={buttonClass} onClick={() => setLater(false)}>Set up sync</button> : <>
+     <form className="flex flex-col gap-2" onSubmit={event => { event.preventDefault(); void saveClient(); }}>
+      <label htmlFor="sync-client-id">Google OAuth client ID</label>
+      <input id="sync-client-id" required autoComplete="off" spellCheck={false} placeholder="1234567890-abc.apps.googleusercontent.com" value={clientId} onChange={event => setClientId(event.target.value)} className="min-w-0 rounded-sm border border-border bg-background px-2 py-1.5 text-xs" />
+      <label htmlFor="sync-client-secret">Google OAuth client secret</label>
+      <input id="sync-client-secret" type="password" required autoComplete="off" spellCheck={false} value={clientSecret} onChange={event => setClientSecret(event.target.value)} className="min-w-0 rounded-sm border border-border bg-background px-2 py-1.5 text-xs" />
+      <div className="flex flex-wrap gap-2"><button type="submit" disabled={busy} className={buttonClass}>Save</button><button type="button" className={buttonClass} onClick={() => setLater(true)}>Set up later</button></div>
+     </form>
+     <details className="mt-1">
+      <summary className="cursor-pointer text-muted-foreground">Advanced: use a sign-in relay</summary>
+      <form className="mt-2 flex flex-col gap-2" onSubmit={event => { event.preventDefault(); void configure(); }}>
+       <label htmlFor="sync-relay-url">Sign-in relay URL</label>
+       <input id="sync-relay-url" type="url" required placeholder="https://your-relay.example" value={relayUrl} onChange={event => setRelayUrl(event.target.value)} className="min-w-0 rounded-sm border border-border bg-background px-2 py-1.5 text-xs" />
+       <div className="flex flex-wrap gap-2"><button type="submit" disabled={busy} className={buttonClass}>Save relay</button></div>
+      </form>
+     </details>
+    </>}
    </SettingsGroup> : <div className="flex flex-wrap gap-2">
     {!status.connected && <button type="button" disabled={busy || status.pending} className={buttonClass} onClick={() => void connect()}>Connect Google Drive</button>}
     {status.connected && <button type="button" disabled={busy || status.phase === "syncing"} className={buttonClass} onClick={() => void action("sync")}>Sync now</button>}

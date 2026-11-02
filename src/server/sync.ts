@@ -5,7 +5,8 @@ import { emit, subscribe } from "../core/events.ts";
 import { SyncEngine } from "../sync/engine.ts";
 import { GoogleDriveRemote } from "../sync/google-drive.ts";
 import { bindAccountToken } from "../sync/account-token.ts";
-import { getGoogleSyncAuthStatus, configureGoogleSyncRelay, beginGoogleSyncSignIn, completeGoogleSyncSignIn, disconnectGoogleSync, getGoogleDriveAccessToken } from "../sync/google-auth.ts";
+import { getGoogleSyncAuthStatus, configureGoogleSyncRelay, configureGoogleSyncClient, beginGoogleSyncSignIn, completeGoogleSyncCallback, completeGoogleSyncSignIn, disconnectGoogleSync, getGoogleDriveAccessToken, GOOGLE_CALLBACK_PATH } from "../sync/google-auth.ts";
+import { isAndroidServer } from "../../lib/platform.ts";
 import { readBrowserPreferences, writeBrowserPreferences } from "../sync/browser-preferences.ts";
 import { documentImportRunning } from "./sync-activity.ts";
 import { readSyncCommand, syncMutationAuthorized, SYNC_HEADERS } from "./sync-http.ts";
@@ -107,7 +108,7 @@ export function syncStatus(): Record<string, unknown> {
 	const state = runtime(), auth = getGoogleSyncAuthStatus();
 	ensureBackground();
 	return { configured: auth.configured, connected: auth.connected, pending: auth.pending,
-		accountLabel: auth.accountLabel, relayUrl: auth.relayUrl,
+		accountLabel: auth.accountLabel, relayUrl: auth.relayUrl, mode: auth.mode ?? (auth.relayUrl ? "relay" : "local"),
 		phase: auth.connected ? state.phase : "disconnected", error: state.error,
 		lastSyncedAt: state.lastSyncedAt, changedAt: state.changedAt, conflicts: engine()?.listConflicts().length ?? 0 };
 }
@@ -120,10 +121,13 @@ export async function syncResponse(request: Request): Promise<Response> {
 		const command = await readSyncCommand(request);
 		switch (command.action) {
 			case "configure":
-				if (typeof command.relayUrl !== "string") return json({ error: "Enter your Google sync relay URL." }, 400);
 				if (runtime().running) return json({ error: "Wait for the current sync to finish." }, 409);
+				if (typeof command.clientId === "string" || typeof command.clientSecret === "string") {
+					configureGoogleSyncClient(command.clientId as string, command.clientSecret as string); return json(syncStatus());
+				}
+				if (typeof command.relayUrl !== "string") return json({ error: "Enter your Google sync relay URL." }, 400);
 				configureGoogleSyncRelay(command.relayUrl); return json(syncStatus());
-			case "connect": return json(await beginGoogleSyncSignIn());
+			case "connect": return json(await beginGoogleSyncSignIn({ redirectUri: loopbackCallback(request) }));
 			case "poll": {
 				const complete = await completeGoogleSyncSignIn();
 				if (complete) { runtime().engine = undefined; runtime().lastKick = 0; }
@@ -145,6 +149,29 @@ export async function syncResponse(request: Request): Promise<Response> {
 	} catch (error) {
 		return json({ error: error instanceof Error ? error.message : "Sync could not finish. Your local data is safe." }, 400);
 	}
+}
+
+/** The callback must come back to this very server: loopback address plus the port the request reached. */
+function loopbackCallback(request: Request): string | undefined {
+	try {
+		const port = new URL(`http://${request.headers.get("host") ?? ""}`).port;
+		return port ? `http://127.0.0.1:${port}${GOOGLE_CALLBACK_PATH}` : undefined;
+	} catch { return undefined; }
+}
+
+const PAGE_HEADERS = { ...SYNC_HEADERS, "Content-Type": "text/html; charset=utf-8", "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'" };
+const escapeHtml = (text: string) => text.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+/** Public (guard-exempt) loopback redirect target for Google sign-in. Reveals nothing without a valid pending state. */
+export async function syncGoogleCallbackResponse(request: Request): Promise<Response> {
+	if (request.method !== "GET") return new Response("Method not allowed", { status: 405, headers: { ...SYNC_HEADERS, Allow: "GET" } });
+	let result;
+	try { result = await completeGoogleSyncCallback(new URL(request.url).searchParams, request.headers.get("host")); }
+	catch { result = { ok: false, status: 400, message: "Google sign-in could not complete. Start sign-in again from LearnHarness." }; }
+	if (result.ok) { const state = runtime(); state.engine = undefined; state.lastKick = 0; }
+	const heading = result.ok ? "Google sign-in complete \u2014 return to LearnHarness" : "Google sign-in not completed";
+	const back = isAndroidServer(process.env) ? `<p><a href="learnharness://auth-done?status=${result.ok ? "ok" : "error"}">Return to LearnHarness</a></p>` : "";
+	const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="referrer" content="no-referrer"><title>LearnHarness</title><style>body{font:18px/1.5 system-ui,sans-serif;margin:0;padding:48px 24px;text-align:center}</style></head><body><h1>${escapeHtml(heading)}</h1><p>${escapeHtml(result.ok ? "You can close this tab." : result.message)}</p>${back}</body></html>`;
+	return new Response(html, { status: result.status, headers: PAGE_HEADERS });
 }
 
 export function syncConflictsResponse(id?: string): Response {

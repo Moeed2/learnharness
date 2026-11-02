@@ -1,12 +1,12 @@
 # Personal Google Drive sync: OAuth setup
 
-This implementation uses your own Google Cloud OAuth client and a small HTTPS Cloudflare Worker relay. It works with the regular browser on Huawei/Android and desktop; it does not require Google Play Services, a desktop loopback callback, a custom Android URL scheme or a second device running a server. Each device must sign in separately to the same Google account, through the same relay/client.
+LearnHarness syncs through your own Google Drive using **your own Google Cloud OAuth client of type "Desktop app"**. Nothing needs to be deployed: the app's local server receives Google's redirect on `http://127.0.0.1:<port>/api/sync/google/callback`, on desktop and on the Android/Huawei tablet alike (the tablet opens sign-in in its normal browser; no Google Play services are needed). Google documents that the client secret of an installed/Desktop app is not confidential, so it is safe to store on your devices; it is still kept only in the private credentials file and is never synced or shown.
 
-No account or deployment has been created by this implementation. Real sign-in needs the setup below. Local automated tests use simulated Google/Cloudflare responses and never access an account.
+No account or project has been created for you. Real sign-in needs the setup below. Automated tests use simulated Google responses and never access an account. (The older Cloudflare relay mode still works and is described in the appendix.)
 
 ## What follows you between devices
 
-Documents and their converted reading text, chats, learning-map progress, source folders and display names, completed background results, model/appearance settings, prompt overrides, keyboard shortcuts and saved view preferences are included. Passwords, provider keys, sign-in sessions, running jobs, caches and debug logs remain on their device. Connect each device to the same Google account **and the same relay/OAuth client**.
+Documents and their converted reading text, chats, learning-map progress, source folders and display names, completed background results, model/appearance settings, prompt overrides, keyboard shortcuts and saved view preferences are included. Passwords, provider keys, sign-in sessions, running jobs, caches and debug logs remain on their device. Connect each device to the same Google account **and the same OAuth client**.
 
 The app keeps local data available offline. It checks Drive about every 30 seconds while its local server is running and reconciles on reopening. Closing the app does not promise continued background syncing. A notice offers Refresh when remote changes arrive; unsent text is not automatically discarded. Independent new documents and chats combine; conflicting edits to the same record retain alternate copies under **Settings → Sync**, where you can export or restore them. Restoring keeps the previously active copy and shares the restored version on the next sync.
 
@@ -14,7 +14,46 @@ Original files are retained for **new imports**. Earlier app versions discarded 
 
 Current safeguards limit individual imported documents/blobs to 25 MB, each metadata group to 64 MB, and the remote revision listing to 200,000 revisions. These are application limits, separate from your Google Drive allowance. Documents transfer one at a time and unchanged content is not downloaded again. Superseded history is kept for 30 days for recovery. After that, at most once a day and only after a successful sync, each device deletes older revisions that a newer revision has replaced, and document blobs that no current document references (up to 500 deletions per run; failures are retried the next day). The latest revision of every item is always kept, including deletion markers that prevent removed items from reappearing, and items with unresolved concurrent versions are not cleaned. A device that was offline longer than 30 days still syncs; its older edits are treated as concurrent changes. Your full 2 TB allowance is available to the account, but a 2 TB library has not been tested.
 
-## 1. Choose a free Cloudflare Worker URL
+## Set up Google (about 10 minutes, once)
+
+1. Open the [Google Cloud console](https://console.cloud.google.com/) and create a project (for example "LearnHarness sync").
+2. **Enable the Google Drive API:** APIs & Services, Library, search "Google Drive API", Enable.
+3. **OAuth consent screen** (Google Auth platform, Branding/Audience): choose user type **External**, enter an app name and your email, and under Audience add your own Google account as a **Test user**. Under Data access you may leave scopes empty; the app requests `drive.appdata`, `openid` and `email` at sign-in.
+4. **Publish to production to avoid weekly sign-ins.** While the app is in "Testing", Google expires refresh tokens after 7 days and you would have to reconnect every week. On the Audience page choose **Publish app** so the status is **In production**. You do not need to submit it for verification: it is only for you. Because it is unverified, Google shows an "unverified app" warning at sign-in. Click **Advanced**, then **Go to LearnHarness (unsafe)**, then continue. The `drive.appdata` scope only allows access to this app's private hidden folder, not your other Drive files.
+5. **Create the credentials:** APIs & Services, Credentials, Create credentials, **OAuth client ID**, application type **Desktop app**, any name. Copy the **Client ID** (ends in `.apps.googleusercontent.com`) and the **Client secret**.
+
+## Connect each device
+
+On every device (desktop and tablet) open **Settings, Sync**, paste the same **Google OAuth client ID** and **client secret**, and press **Save**. Then press **Connect Google Drive** and open the sign-in link. The page opens in your normal browser: choose the same Google account on every device, accept the unverified-app warning if shown (step 4), and approve access. The browser then shows "Google sign-in complete, return to LearnHarness" (on Android it also offers a button back to the app). The status in Settings changes to connected.
+
+How it works: the app creates a one-time PKCE verifier and a random single-use `state` (valid for ten minutes), sends you to `accounts.google.com` with the loopback redirect, and the local server validates `state` in constant time, exchanges the code at `https://oauth2.googleapis.com/token` with the verifier and your client ID/secret, checks that the response includes the `drive.appdata` scope and a refresh token, and reads the account ID and email from the ID token that Google returned directly over TLS (issuer, audience and expiry are checked; signatures are not independently verified). Tokens never reach the browser page or status API. The callback path is the only `/api` route reachable without the desktop/Android access secret, and it does nothing unless a valid pending sign-in with that exact `state` exists. Access tokens are renewed directly with Google using the refresh token.
+
+Drive data uses the private `appDataFolder`, not a visible folder. Your Drive quota applies. Disconnect (see below) only removes this device's tokens.
+
+## Disconnect and troubleshooting
+
+**Disconnect affects only this device:** it removes local tokens and cancels a pending sign-in without contacting Google, even offline, and keeps the saved client ID and secret. Other devices keep syncing. To revoke the whole grant, remove LearnHarness at [Google Account connections](https://myaccount.google.com/connections); every device then needs to reconnect. Changing the client ID requires disconnecting first.
+
+- **"Access blocked" / not a test user:** add your account under Audience, Test users, or publish the app (step 4).
+- **Unverified-app warning:** expected; use Advanced, then continue.
+- **Asked to sign in again after about a week:** the app is still in Testing; publish it to production and reconnect.
+- **redirect_uri_mismatch or invalid client:** the OAuth client must be of type **Desktop app** (not Web application); re-create it if necessary.
+- **Callback page says the link is not valid:** the ten-minute window passed or the link was used already; press Connect again.
+- **Credentials file:** `PATHS.data/.sync/google-auth.json` (relocated by `LH_DATA_DIR`), directory `0700`, file `0600`, written atomically and excluded from sync. These POSIX modes are not Windows ACLs; use a private OS profile. It is a local file, not a hardware keystore.
+
+## Local verification
+
+```powershell
+node --import tsx --test tests/google-sync-local-auth.test.ts tests/google-sync-callback-guard.test.ts tests/google-sync-auth.test.ts
+```
+
+Tests inject fake Google responses and temporary credential directories: state mismatch/expiry/reuse, PKCE binding, token and ID-token validation, refresh, non-leaking status and HTML, and that only the callback path bypasses the API guard. End-to-end verification needs your Google project and a browser on desktop/Huawei.
+
+## Appendix: relay mode (optional, legacy)
+
+Instead of a Desktop client you can use a Google **Web application** client whose secret lives in a small Cloudflare Worker relay that you deploy. Enter its HTTPS address under **Settings, Sync, Advanced: use a sign-in relay** or set `LH_GOOGLE_SYNC_RELAY_URL` (this overrides local mode). Everything below applies only to relay mode.
+
+### R1. Choose a free Cloudflare Worker URL
 
 Use a Cloudflare account with Workers Free and a workers.dev subdomain. No custom domain is required. In Cloudflare's Workers dashboard, choose your workers.dev subdomain. With the configured Worker name, the final origin will be:
 
@@ -24,7 +63,7 @@ https://learnharness-google-drive-relay.YOUR-SUBDOMAIN.workers.dev
 
 Use your actual origin everywhere below, with no trailing slash. This relay must be controlled by you: its operator necessarily sees tokens in transit during exchange and refresh. Never use an untrusted public relay.
 
-## 2. Create the Google Web OAuth client
+### R2. Create the Google Web OAuth client
 
 1. Open [Google Cloud Console](https://console.cloud.google.com/), create/select a project for your personal LearnHarness sync, and enable **Google Drive API** under **APIs & Services → Library**.
 2. Open **Google Auth Platform**. Complete **Branding** with an app name and your support/developer email. For a personal Gmail account, choose **External** under **Audience**.
@@ -42,7 +81,7 @@ The Google client secret must never be put in the application environment, Andro
 
 **Testing mode limitation:** because this app requests Drive access, refresh tokens issued while an External app is in Testing expire after seven days. Reconnect when needed, or move the consent app to **In production** in Audience and follow any Google requirements shown there. Production status does not prevent revocation or all token expiry. See [Google token expiration rules](https://developers.google.com/identity/protocols/oauth2#expiration).
 
-## 3. Configure and deploy the relay yourself
+### R3. Configure and deploy the relay yourself
 
 In a terminal in `cloud/google-drive-relay` (Node.js and npm required), run:
 
@@ -65,7 +104,7 @@ For `GOOGLE_CLIENT_SECRET`, paste the Google Web client secret. For `STATE_SECRE
 
 See [Cloudflare KV setup](https://developers.cloudflare.com/kv/get-started/) and [Worker secrets](https://developers.cloudflare.com/workers/configuration/secrets/). Free quotas apply to requests, KV reads, writes and deletions; signing in/polling is the main KV traffic, while refresh does not use KV. Check the [Workers limits](https://developers.cloudflare.com/workers/platform/limits/) and [KV limits](https://developers.cloudflare.com/kv/platform/limits/) rather than enabling paid upgrades automatically.
 
-## 4. Connect each device
+### R4. Connect each device
 
 Configure the relay URL through the application's sync settings, or set the Node runtime environment variable:
 
@@ -79,7 +118,7 @@ Use **Connect Google**, open the provided URL in the normal browser, choose your
 
 Drive data uses the private `appDataFolder`, not a folder visible in My Drive. Your account's Drive storage quota still applies. Signing in only authorizes access; the separate sync service controls uploads. Changing Google accounts must pass that service's account-binding checks before uploading an existing local workspace.
 
-## Credential and relay behavior
+### Credential and relay behavior
 
 - Local config, pending verifier and device tokens live in `PATHS.data/.sync/google-auth.json`, relocated by `LH_DATA_DIR`. This directory is excluded from sync. Writes use a temporary file and atomic rename, directory mode `0700` and file mode `0600`. These POSIX modes do not replace Windows ACLs: use a private OS user/profile or Android app-private directory. This is a local credential file, not an encrypted hardware keystore.
 - Public status includes only configured/connected/pending flags, relay URL and connected account ID/label. No access tokens, refresh tokens, verifiers or ID tokens are returned in status. `getGoogleDriveAccessToken()` is server-only.
@@ -89,7 +128,7 @@ Drive data uses the private `appDataFolder`, not a folder visible in My Drive. Y
 - `/refresh` receives a device refresh token, exchanges it at Google with the server secret, and returns only access token, expiry and a replacement refresh token if supplied. Tokens are transient in Worker memory during requests; neither tokens nor request credentials are logged by this code. Refresh starts sixty seconds before access-token expiry. Network failures retain local credentials; a rejected/revoked refresh requires sign-in again.
 - Local polling and refresh are single-flight. Starting another sign-in while connected requires an explicit disconnect first. Disconnect or relay/account changes invalidate pending in-flight writes. A relay configuration change cannot silently send an existing token to another relay.
 
-### One-use codes, races and safe retries
+#### One-use codes, races and safe retries
 
 Workers KV is eventually consistent and offers no atomic consume operation ([Cloudflare consistency model](https://developers.cloudflare.com/kv/concepts/how-kv-works/)). It is not used as a lock. Google enforces one-time authorization-code redemption. Concurrent relay requests can therefore produce one success and a retry/sign-in-required response, never two successful grants. The local app serializes polling to avoid this race in normal use.
 
@@ -97,7 +136,7 @@ An in-memory set of challenges prevents concurrent exchange within a single Work
 
 If Google's exchange succeeds but the response is lost, or the device cannot save credentials, the app must start a **new sign-in**. The relay intentionally cannot replay successful token responses because it stores no tokens. Strict atomic cross-region redemption or transparent recovery of lost successful responses would require a different coordination/storage design; KV alone cannot provide either guarantee.
 
-## Disconnect and recovery
+### Disconnect and recovery
 
 **Disconnect affects only this device:** it removes local credentials and cancels pending sign-in without contacting Google or the relay, including when offline. Other devices retain their own tokens and can continue syncing. Disconnect does not delete local documents or remote app data.
 
@@ -111,7 +150,7 @@ To explicitly revoke the **entire Google OAuth grant**, open [Google Account con
 - **Lost authorization response / already used code:** start a new sign-in. Do not retry the Google callback URL manually.
 - **Different relay:** disconnect before reconfiguring. If an environment override is present, update it as well. Do not reuse credentials across unrelated OAuth clients.
 
-## Local verification
+### Local verification
 
 ```powershell
 node --import tsx --test tests/google-sync-auth.test.ts

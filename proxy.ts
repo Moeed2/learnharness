@@ -1,10 +1,12 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { desktopAPIAuthorized } from "./src/server/desktop-access.ts";
+import { desktopAPIAuthorized, publicOAuthCallback } from "./src/server/desktop-access.ts";
 
 /** Applies to every API method, including SSE and spending/settings routes.
- * No public callback or worker bypass: internal jobs call server functions,
+ * The single exception is the Google sign-in loopback redirect (exact path, GET),
+ * which validates its own single-use state. Internal jobs call server functions,
  * and any legitimate self-HTTP request must carry the private capability. */
 export function proxy(request: NextRequest) {
+	if (publicOAuthCallback(request.method, request.nextUrl.pathname)) return NextResponse.next();
 	if (!desktopAPIAuthorized(request.headers)) {
 		return NextResponse.json(
 			{ error: "Desktop API access requires the trusted LearnHarness window." },

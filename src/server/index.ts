@@ -56,4 +56,4 @@ export * from "./custom-provider.ts";
 export { customProviderGet, customProviderMutation } from "./custom-provider-http.ts";
 export { saveDocument, listDocuments, readDocument } from "../store/documents.ts";
 export { duringDocumentImport } from "./sync-activity.ts";
-export { syncResponse, syncConflictsResponse, syncPreferencesResponse } from "./sync.ts";
+export { syncResponse, syncConflictsResponse, syncPreferencesResponse, syncGoogleCallbackResponse } from "./sync.ts";

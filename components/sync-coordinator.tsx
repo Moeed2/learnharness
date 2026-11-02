@@ -8,6 +8,7 @@ export type SyncStatus = {
  pending: boolean;
  accountLabel?: string;
  relayUrl?: string;
+ mode?: "local" | "relay";
  phase: "disconnected" | "idle" | "syncing" | "offline" | "deferred" | "error";
  lastSyncedAt?: string;
  error?: string;
@@ -20,7 +21,7 @@ type SyncContextValue = {
  busy: boolean;
  error: string | null;
  refresh: () => Promise<void>;
- action: (action: SyncAction, value?: string) => Promise<{ url?: string } | null>;
+ action: (action: SyncAction, value?: string | { clientId: string; clientSecret: string }) => Promise<{ url?: string } | null>;
 };
 const SyncContext = createContext<SyncContextValue>({ status: null, busy: false, error: null, refresh: async () => {}, action: async () => null });
 export const useSync = () => useContext(SyncContext);
@@ -47,6 +48,13 @@ const publicSyncErrors = new Set([
  "Open Sync settings in the learning app to change this connection.",
  "Enter your Google sync relay URL.",
  "Enter the HTTPS Google sync relay URL.",
+ "Enter the Google OAuth client ID (ends with .apps.googleusercontent.com).",
+ "Enter the Google OAuth client secret.",
+ "Disconnect Google sync before changing the Google client.",
+ "Save your Google OAuth client ID and secret first.",
+ "Start Google sign-in from the LearnHarness app on this device.",
+ "Google is unavailable. Try again when online.",
+ "Google returned an invalid response.",
  "Google sync relay must be an HTTPS origin without credentials, path or query.",
  "Disconnect Google sync before changing the relay.",
  "Configure the Google sync HTTPS relay first.",
@@ -89,6 +97,16 @@ export function safeSyncConnectUrl(value: unknown, relayUrl: string | undefined,
  } catch { return null; }
 }
 
+/** Local mode: the browser only opens Google's fixed authorization endpoint. */
+export function safeGoogleSignInUrl(value: unknown): string | null {
+ try {
+  if (typeof value !== "string") return null;
+  const url = new URL(value);
+  if (url.origin !== "https://accounts.google.com" || url.pathname !== "/o/oauth2/v2/auth" || url.username || url.password || url.hash) return null;
+  return url.href;
+ } catch { return null; }
+}
+
 export function SyncCoordinator({ children }: { children: ReactNode }) {
  const [status, setStatus] = useState<SyncStatus | null>(null);
  const [busy, setBusy] = useState(false);
@@ -100,14 +118,14 @@ export function SyncCoordinator({ children }: { children: ReactNode }) {
  const baseline = useRef<string | undefined>(undefined);
  const controller = useRef<AbortController | null>(null);
  const mounted = useRef(false);
- const run = useCallback(async (action?: SyncAction, value?: string): Promise<{ url?: string } | null> => {
+ const run = useCallback(async (action?: SyncAction, value?: string | { clientId: string; clientSecret: string }): Promise<{ url?: string } | null> => {
   if (!mounted.current || controller.current) return null;
   const request = new AbortController(); controller.current = request;
   setBusy(true);
   const read = async (action?: SyncAction) => {
    const response = await fetch("/api/sync", {
     method: action ? "POST" : "GET", headers, cache: "no-store", signal: request.signal,
-    ...(action ? { body: JSON.stringify({ action, ...(action === "configure" ? { relayUrl: value } : action === "restore" ? { id: value } : {}) }) } : {}),
+    ...(action ? { body: JSON.stringify({ action, ...(action === "configure" ? (typeof value === "object" ? value : { relayUrl: value }) : action === "restore" ? { id: value } : {}) }) } : {}),
    });
    if (!response.ok) {
     const detail = await response.json().catch(() => null) as { error?: unknown } | null;
