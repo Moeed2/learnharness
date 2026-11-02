@@ -50,6 +50,7 @@ import { KeysSection } from "./keys-section.tsx";
 import { Hint } from "@/components/ui/hint";
 import { AppearanceSection, GraphSection } from "./appearance-section.tsx";
 import { KeyboardSection } from "./keyboard-section.tsx";
+import { SyncSection } from "./sync-section.tsx";
 import { ChatGPTUIProvider } from "./chatgpt-connection.tsx";
 import { NativeSubscriptionUIProvider } from "./subscription-connections.tsx";
 
@@ -61,7 +62,8 @@ const SECTIONS = [
 	{ id: "agent", label: "Agent" },
 	{ id: "appearance", label: "Appearance" },
 	{ id: "graph", label: "Graph" },
-	{ id: "keyboard", label: "Keyboard", hint: "Stored on this device" },
+	{ id: "keyboard", label: "Keyboard", hint: "Synced with your learning data" },
+	{ id: "sync", label: "Sync" },
 	{ id: "general", label: "General" },
 ] as const;
 type SectionId = (typeof SECTIONS)[number]["id"];
@@ -355,6 +357,7 @@ export function SettingsDialogBody({
 						</p>
 					) : (
 						<div>
+							{active === "sync" && <SettingsSection title="Sync" testid="section-sync"><SyncSection /></SettingsSection>}
 							{active === "general" && (
 								<SettingsSection
 									title="General"
@@ -424,7 +427,7 @@ export function SettingsDialogBody({
 							{active === "keyboard" && (
 								<SettingsSection
 									title="Keyboard"
-									hint="Stored on this device"
+									hint="Synced with your learning data"
 									testid="section-keyboard"
 								>
 									<KeyboardSection />

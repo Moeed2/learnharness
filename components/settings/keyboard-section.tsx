@@ -155,7 +155,7 @@ export function KeyboardSection() {
 				);
 			})}
 			<div className="mt-1 flex items-center justify-between">
-				<span className="text-xs text-muted-foreground/70">Stored on this device (lh:keymap) — overrides only.</span>
+				<span className="text-xs text-muted-foreground/70">Keyboard preferences are saved locally and included when sync is connected.</span>
 				<button
 					type="button"
 					onClick={resetAll}

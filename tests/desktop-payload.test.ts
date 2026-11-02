@@ -37,9 +37,11 @@ function withPayload(test: (fixture: {
 }
 
 describe("desktop standalone payload", () => {
-	it("removes only traced installers/dev Electron, preserving runtime dist/ and native binaries", () => {
+	it("removes traced build outputs and test/relay secrets, preserving runtime packages", () => {
 		withPayload(({ root, write, run }) => {
-			for (const extra of [path.join("dist", "old.app", "nested.dmg"), path.join("node_modules", "electron", "dist", "electron.exe")]) {
+			for (const extra of [path.join("dist", "old.app", "nested.dmg"), path.join("node_modules", "electron", "dist", "electron.exe"),
+				path.join("android", "app", "build", "old.apk"), path.join("device-run", "test-data", ".sync", "google-auth.json"),
+				path.join("cloud", "google-drive-relay", ".dev.vars")]) {
 				// BOTH copies exist: curation must not touch the real repo's build/runtime.
 				write(extra);
 				write(path.join(STANDALONE, extra));
@@ -56,6 +58,7 @@ describe("desktop standalone payload", () => {
 			assert.equal(result.status, 0, String(result.stderr));
 			assert.equal(fs.existsSync(path.join(root, STANDALONE, "dist")), false);
 			assert.equal(fs.existsSync(path.join(root, STANDALONE, "node_modules", "electron")), false);
+			for (const dir of ["android", "device-run", "cloud"]) assert.equal(fs.existsSync(path.join(root, STANDALONE, dir)), false, dir);
 			assert.ok(fs.existsSync(path.join(root, "dist", "old.app", "nested.dmg")));
 			assert.ok(fs.existsSync(path.join(root, "node_modules", "electron", "dist", "electron.exe")));
 			for (const file of runtime) assert.ok(fs.existsSync(path.join(root, STANDALONE, file)), file);

@@ -69,8 +69,11 @@ for (const secret of ["auth.json", ...subscriptionSecrets, ".env", ".env.local"]
 // generic dist/** earlier broke pi-ai / pi-agent-core's runtime dist/.
 // Never touch ROOT/dist or ROOT/node_modules/electron (the running app
 // and the build runtime); native canvas/resvg packages stay untouched.
-for (const extra of ["dist", path.join("node_modules", "electron")]) {
-	const target = path.join(STANDALONE, extra);
+// Device test captures and relay-development secrets are also development-only.
+// Exact root paths avoid excluding runtime packages with similarly named folders.
+for (const extra of ["dist", "android", "device-run", "cloud", path.join("node_modules", "electron")]) {
+	const target = path.resolve(STANDALONE, extra);
+	if (!target.startsWith(path.resolve(STANDALONE) + path.sep)) throw new Error("Unsafe payload-curation target");
 	if (exists(target)) {
 		fs.rmSync(target, { recursive: true, force: true });
 		console.log(`[build-server] removed build-only payload: ${extra}`);
