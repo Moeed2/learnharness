@@ -10,7 +10,8 @@ function validMeta(value: unknown): value is RevisionMeta {
 	const v = value as RevisionMeta;
 	return typeof v.id === "string" && ID.test(v.id) && typeof v.unit === "string" && v.unit.length <= 256
 		&& Array.isArray(v.parents) && v.parents.length <= 256 && v.parents.every((id) => typeof id === "string" && ID.test(id))
-		&& typeof v.deleted === "boolean" && typeof v.hash === "string" && /^[a-f0-9]{64}$/.test(v.hash);
+		&& typeof v.deleted === "boolean" && typeof v.hash === "string" && /^[a-f0-9]{64}$/.test(v.hash)
+		&& (!Object.hasOwn(v, "at") || (Number.isSafeInteger(v.at) && v.at! > 0));
 }
 
 /** Immutable revisions avoid a shared Drive index that two offline clients could overwrite. */

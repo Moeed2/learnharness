@@ -437,7 +437,8 @@ export function validateMeta(m: RevisionMeta): void {
     ) ||
     new Set(m.parents).size !== m.parents.length ||
     typeof m.deleted !== "boolean" ||
-    !/^[a-f0-9]{64}$/.test(m.hash)
+    !/^[a-f0-9]{64}$/.test(m.hash) ||
+    (Object.hasOwn(m, "at") && !(Number.isSafeInteger(m.at) && m.at! > 0))
   )
     throw Error("Invalid revision metadata");
   if (m.unit.startsWith("documents/blobs/") && m.deleted)

@@ -163,7 +163,8 @@ export function syncConflictsResponse(id?: string): Response {
 					} catch { /* The validated revision can still contain an older record shape. */ }
 				}
 			}
-			return { id: item.id, name: `${name} (${item.id.slice(-8)})` };
+			const at = revision?.meta.at;
+			return { id: item.id, name: at ? `${name} \u2014 saved ${new Date(at).toLocaleString()}` : `${name} (${item.id.slice(-8)})` };
 		}) });
 		const revision = current?.readConflict(id);
 		if (!revision) return json({ error: "Saved copy not found." }, 404);

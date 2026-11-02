@@ -4,6 +4,8 @@ export interface RevisionMeta {
   parents: string[];
   deleted: boolean;
   hash: string;
+  /** Wall-clock ms at creation; absent on revisions from older builds. */
+  at?: number;
 }
 export interface Revision {
   meta: RevisionMeta;
@@ -20,6 +22,8 @@ export interface SyncEngineOptions {
   remote: SyncRemote;
   accountId: string;
   isBusy?: () => boolean;
+  /** Injectable clock (ms) for deterministic tests. */
+  now?: () => number;
   onApplied?: (paths: string[]) => void;
 }
 export interface SyncResult {

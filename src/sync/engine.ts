@@ -24,7 +24,12 @@ import { mergeWorkspace } from "./merge.ts";
 interface Baseline {
   hash: string;
   heads: string[];
+  /** Newest `at` among the heads, so restores stay later than their parents. */
+  at?: number;
 }
+/** Oldest first: by creation time (legacy = 0), id as a stable tiebreaker. */
+const byAge = (a: RevisionMeta, b: RevisionMeta) =>
+  (a.at ?? 0) - (b.at ?? 0) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
 interface State {
   accountId: string;
   baseline: Record<string, Baseline>;
@@ -36,6 +41,11 @@ interface State {
 const flights = new Map<string, Promise<SyncResult>>();
 export class SyncEngine {
   constructor(private readonly options: SyncEngineOptions) {}
+  /** Creation time, never earlier than the newest parent (clock-skew safe). */
+  private stamp(parentAts: (number | undefined)[]): { at: number } {
+    const floor = Math.max(0, ...parentAts.map((a) => a ?? 0)) + 1;
+    return { at: Math.max((this.options.now ?? Date.now)(), floor) };
+  }
   sync(): Promise<SyncResult> {
     const key = path.resolve(this.options.root);
     const active = flights.get(key);
@@ -101,6 +111,7 @@ export class SyncEngine {
         parents: state.baseline[r.meta.unit]?.heads ?? [],
         deleted: Object.keys(files).length === 0,
         hash: filesHash(files),
+        ...this.stamp([state.baseline[r.meta.unit]?.at, r.meta.at]),
       },
       files,
     };
@@ -112,6 +123,7 @@ export class SyncEngine {
     // Force publication even if the recovered content equals the active winner.
     state.baseline[r.meta.unit] = {
       heads: state.baseline[r.meta.unit]?.heads ?? [],
+      at: state.baseline[r.meta.unit]?.at,
       hash: "restored",
     };
     atomicJSON(stateFile, state);
@@ -272,6 +284,7 @@ export class SyncEngine {
           parents: [],
           deleted: false,
           hash,
+          ...this.stamp([]),
         },
         files,
       });
@@ -283,7 +296,7 @@ export class SyncEngine {
     const ensureBlob = async (ref: string): Promise<boolean> => {
       const candidates = [...metas.values()]
         .filter((m) => m.unit === ref)
-        .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+        .sort(byAge);
       const meta = candidates.at(-1);
       if (!meta) throw Error("Missing referenced blob");
       if (localBlobHash(o.root, ref) === meta.hash) return true;
@@ -323,6 +336,11 @@ export class SyncEngine {
           parents: pending ? [pending.meta.id] : (base?.heads ?? []),
           deleted: !Object.keys(files).length,
           hash,
+          ...this.stamp(
+            (pending ? [pending.meta.id] : (base?.heads ?? [])).map(
+              (id) => metas.get(id)?.at,
+            ),
+          ),
         },
         files,
       };
@@ -361,7 +379,7 @@ export class SyncEngine {
       const parents = new Set(group.flatMap((m) => m.parents));
       const heads = group
         .filter((m) => !parents.has(m.id))
-        .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+        .sort(byAge);
       selected.set(unit, { heads, winner: heads[heads.length - 1]! });
     }
     const get = async (m: RevisionMeta) => {
@@ -408,7 +426,6 @@ export class SyncEngine {
     }
     // Concurrent workspace heads are merged (learning progress must not be
     // pushed out of the active map); other units keep winner + conflict copies.
-    const merged = new Set<string>();
     const ws = selected.get("workspace");
     if (ws && ws.heads.length > 1) {
       const ancestors = (m: RevisionMeta) => {
@@ -437,31 +454,28 @@ export class SyncEngine {
         ws.heads.map((m) => cache.get(m.id)!.files),
       );
       const hash = filesHash(files);
-      const equal = ws.heads.find((m) => m.hash === hash);
-      if (equal) {
-        ws.winner = equal;
-        merged.add("workspace");
-      } else {
-        const revision: Revision = {
-          meta: {
-            id: randomUUID(),
-            unit: "workspace",
-            parents: ws.heads.map((m) => m.id),
-            deleted: false,
-            hash,
-          },
-          files,
-        };
-        await publishMerge(revision);
-        cache.set(revision.meta.id, revision);
-        selected.set("workspace", {
-          heads: [revision.meta],
-          winner: revision.meta,
-        });
-        if (!unchanged()) {
-          result.deferred = true;
-          return result;
-        }
+      // Always publish, even when the result equals a head, so the DAG
+      // collapses to a single head instead of re-merging on every sync.
+      const revision: Revision = {
+        meta: {
+          id: randomUUID(),
+          unit: "workspace",
+          parents: ws.heads.map((m) => m.id),
+          deleted: false,
+          hash,
+          ...this.stamp(ws.heads.map((m) => m.at)),
+        },
+        files,
+      };
+      await publishMerge(revision);
+      cache.set(revision.meta.id, revision);
+      selected.set("workspace", {
+        heads: [revision.meta],
+        winner: revision.meta,
+      });
+      if (!unchanged()) {
+        result.deferred = true;
+        return result;
       }
     }
     const ordered = [...selected.entries()].sort(
@@ -472,7 +486,7 @@ export class SyncEngine {
     const changed: string[] = [];
     for (const [unit, { heads, winner }] of ordered) {
       const r = cache.get(winner.id)!;
-      for (const loser of merged.has(unit) ? [] : heads.slice(0, -1)) {
+      for (const loser of heads.slice(0, -1)) {
         const conflict = safePath(
           o.stateDir,
           "conflicts/" + loser.id + ".json",
@@ -492,6 +506,7 @@ export class SyncEngine {
       state.baseline[unit] = {
         hash: winner.hash,
         heads: heads.map((m) => m.id),
+        at: Math.max(0, ...heads.map((m) => m.at ?? 0)) || undefined,
       };
     }
     state.pending = [];
