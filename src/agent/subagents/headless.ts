@@ -6,7 +6,6 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { isAndroidServer } from "../../../lib/platform";
 import { androidRenderClientFromEnv, createAndroidHeadless } from "./headless-android";
 import { standardFontsDir } from "./pdf-ops";
-import { isAndroidServer } from "../../../lib/platform.ts";
 
 /**
  * Verification engines for sub-agents: demos use the app's own Electron
