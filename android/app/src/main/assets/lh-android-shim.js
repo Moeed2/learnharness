@@ -11,8 +11,11 @@
  *   pickFolder(opts?)  -> Promise<{id, name, files:[{path,size,url}], skipped, error?}>
  *   releaseImport(id)  -> Promise<void>
  *   saveFile(name, blob, mime?) -> Promise<{ok, name?, error?}>
+ *   subscriptionTransport = "web"
+ *   openSubscriptionBrowser(action) -> Promise<void>   (step 3: ChatGPT sign-in;
+ *       same contract as electron/web-subscription-browser.cjs)
  * It deliberately does NOT define platform, getPathForFile, expandWindow,
- * subscriptionTransport, chatgpt or subscriptions.
+ * chatgpt or subscriptions (so the UI uses the web bridge over /api/subscriptions).
  */
 (function () {
 	"use strict";
@@ -60,6 +63,20 @@
 	lh.releaseImport = function (id) {
 		try { N.releaseImport(T, String(id)); } catch (e) { /* best effort */ }
 		return Promise.resolve();
+	};
+
+	// --- ChatGPT sign-in (step 3) ---------------------------------------------
+	// The native side POSTs the one-use action to the local server (with the
+	// guard cookie), reads the 303 without following it, checks it is an
+	// https://auth.openai.com page and opens it in a Custom Tab / the browser.
+	lh.subscriptionTransport = "web";
+	lh.openSubscriptionBrowser = function (action) {
+		if (typeof action !== "string" || !/^\/api\/subscriptions\/browser\?id=[0-9a-f-]{36}$/.test(action)) {
+			return Promise.reject(new Error("Invalid sign-in action."));
+		}
+		return native(function (id) { N.openSubscriptionBrowser(T, id, action); }).then(function (r) {
+			if (!r || !r.ok) throw new Error((r && r.error) || "The sign-in page could not be opened.");
+		});
 	};
 
 	// --- saving blobs to Downloads ------------------------------------------

@@ -17,6 +17,7 @@ function boot(existingLh?: Record<string, unknown>) {
 		saveChunk: (_t: string, id: string, b64: string) => { saved.find((s) => s.id === id)!.chunks.push(b64); return true; },
 		saveEnd: () => JSON.stringify({ ok: true }),
 		saveAbort: () => {},
+		openSubscriptionBrowser: (...a: unknown[]) => calls.push(["openSubscriptionBrowser", ...a]),
 	};
 	const listeners: Record<string, ((e: unknown) => void)[]> = {};
 	const anchorProto = { click() { (this as { clicked?: boolean }).clicked = true; } };
@@ -43,12 +44,31 @@ test("shim defines only the file members and keeps an existing window.lh", () =>
 	const { win } = boot({ subscriptionTransport: "web" });
 	const lh = win.lh as Record<string, unknown>;
 	assert.equal(lh.subscriptionTransport, "web");
-	assert.deepEqual(Object.keys(lh).sort(), ["pickFiles", "pickFolder", "releaseImport", "saveFile", "subscriptionTransport"]);
+	assert.deepEqual(Object.keys(lh).sort(), ["openSubscriptionBrowser", "pickFiles", "pickFolder", "releaseImport", "saveFile", "subscriptionTransport"]);
 });
 
 test("shim never defines desktop-only members", () => {
 	const lh = boot().win.lh as Record<string, unknown>;
-	for (const key of ["platform", "getPathForFile", "expandWindow", "subscriptionTransport", "chatgpt", "subscriptions"]) assert.equal(key in lh, false, key);
+	for (const key of ["platform", "getPathForFile", "expandWindow", "chatgpt", "subscriptions"]) assert.equal(key in lh, false, key);
+	assert.equal(lh.subscriptionTransport, "web");
+});
+
+test("openSubscriptionBrowser validates the action and resolves from the native reply", async () => {
+	const { win, calls } = boot();
+	const lh = win.lh as { openSubscriptionBrowser(a: string): Promise<void> };
+	await assert.rejects(lh.openSubscriptionBrowser("https://evil.example/"), /Invalid sign-in action/);
+	await assert.rejects(lh.openSubscriptionBrowser("/api/subscriptions/browser?id=zz"), /Invalid sign-in action/);
+	assert.equal(calls.length, 0);
+	const action = "/api/subscriptions/browser?id=01234567-89ab-cdef-0123-456789abcdef";
+	const cb = win.__lhNativeCb as { resolve(id: string, j: string): void };
+	const ok = lh.openSubscriptionBrowser(action);
+	assert.deepEqual(calls[0]!.slice(0, 2), ["openSubscriptionBrowser", "tok"]);
+	assert.equal(calls[0]![3], action);
+	cb.resolve(calls[0]![2] as string, JSON.stringify({ ok: true }));
+	await ok;
+	const bad = lh.openSubscriptionBrowser(action);
+	cb.resolve(calls[1]![2] as string, JSON.stringify({ ok: false, error: "Sign-in action expired." }));
+	await assert.rejects(bad, /expired/);
 });
 
 test("pickFiles resolves from the native callback and sends the token", async () => {

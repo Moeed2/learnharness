@@ -6,6 +6,7 @@ const crypto = require("node:crypto");
 const http = require("node:http");
 const fs = require("node:fs/promises");
 const path = require("node:path");
+const { callbackResponse } = require("./chatgpt-callback.cjs");
 
 const ISSUER = "https://auth.openai.com";
 const RESOURCE = "https://api.openai.com/v1";
@@ -74,9 +75,12 @@ function fileStore(file) {
 				handle = null;
 				await fs.rename(temp, file);
 				// Directory fsync is supported on Unix; the file fsync above is mandatory.
+				// Android (LH_ANDROID=1): some app-private filesystems reject it; the rename already happened.
 				if (process.platform !== "win32") {
-					const dir = await fs.open(path.dirname(file), "r");
-					try { await dir.sync(); } finally { await dir.close(); }
+					try {
+						const dir = await fs.open(path.dirname(file), "r");
+						try { await dir.sync(); } finally { await dir.close(); }
+					} catch (err) { if (process.env.LH_ANDROID !== "1") throw err; }
 				}
 			} catch {
 				throw fail("storage");
@@ -95,7 +99,7 @@ function allowedAuthEndpoint(value) {
 	} catch { return false; }
 }
 
-function createChatGPT({ store, openExternal, fetch: request = globalThis.fetch, onChange = () => {}, timeoutMs = 180000 }) {
+function createChatGPT({ store, openExternal, fetch: request = globalThis.fetch, onChange = () => {}, timeoutMs = 180000, android = process.env.LH_ANDROID === "1" }) {
 	let state;
 	let init;
 	let queue = Promise.resolve();
@@ -294,7 +298,10 @@ function createChatGPT({ store, openExternal, fetch: request = globalThis.fetch,
 				// Reject duplicate parameters and unsolicited callbacks without consuming a valid pending attempt.
 				if (["state", "code", "client_id", "error"].some((key) => params.getAll(key).length > 1) || params.get("state") !== expectedState) { res.writeHead(400).end("Sign-in could not be verified."); return; }
 				consumed = true;
-				res.writeHead(200, { "content-type": "text/plain; charset=utf-8" }).end("Return to LearnHarness to view the sign-in result. You may close this tab.");
+				const reply = callbackResponse({ android, failed: params.has("error"), nonce: android ? crypto.randomBytes(16).toString("base64url") : "" });
+				if (android) res.setHeader("Content-Security-Policy", reply.headers["content-security-policy"]); // Android page only; desktop keeps default-src 'none'
+				res.writeHead(reply.status, { "content-type": reply.headers["content-type"] }).end(reply.body);
+				if (android) await new Promise((resolve) => { res.once("close", resolve); setTimeout(resolve, 1500).unref(); }); // let the page flush before the listener closes
 				cleanup();
 				try {
 					if (params.has("error")) throw fail(params.get("error") === "access_denied" ? "cancelled" : "identity");

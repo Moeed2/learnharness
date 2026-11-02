@@ -24,6 +24,7 @@ class LhJsBridge(
     private val downloads: LhDownloads,
 ) {
     private val token: String = UUID.randomUUID().toString()
+    private val signIn = LhSignIn(activity) // step 3: ChatGPT sign-in in the browser
     private val shim: String by lazy {
         activity.assets.open(SHIM_ASSET).bufferedReader().use { it.readText() }.replace("__LH_TOKEN__", token)
     }
@@ -77,6 +78,12 @@ class LhJsBridge(
         fun releaseImport(t: String?, id: String) {
             if (!ok(t)) return
             imports.release(id)
+        }
+
+        @JavascriptInterface
+        fun openSubscriptionBrowser(t: String?, callId: String, action: String) {
+            if (!ok(t)) return
+            signIn.open(action) { resolve(callId, it) }
         }
 
         @JavascriptInterface

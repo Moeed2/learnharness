@@ -144,7 +144,7 @@ class MainActivity : Activity() {
             root.addView(wv, 0, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         }
         ApiGuard.installCookie(origin) // /api requires this cookie (see ApiGuard)
-        wv.loadUrl("$origin/")
+        wv.loadUrl(origin + LhSession.restorePath(this)) // step 3: back to the last page after a process restart
     }
 
     private fun createWebView(origin: String): WebView? {
@@ -182,6 +182,10 @@ class MainActivity : Activity() {
                 return true
             }
 
+            override fun doUpdateVisitedHistory(view: WebView, url: String?, isReload: Boolean) {
+                LhSession.save(this@MainActivity, origin, url) // also fires for SPA pushState
+            }
+
             override fun onPageStarted(view: WebView, url: String?, favicon: android.graphics.Bitmap?) {
                 features?.onPageStarted(url)
             }
@@ -216,6 +220,13 @@ class MainActivity : Activity() {
         } else {
             moveTaskToBack(true)
         }
+    }
+
+    /** learnharness://auth-done (ChatGPT sign-in callback page): singleTask brings the app to the front; the UI refreshes over SSE. */
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        if (LhSession.isAuthDone(intent.data)) Log.i(AppConfig.TAG, "sign-in returned: ${intent.data?.getQueryParameter("status")}")
     }
 
     override fun onResume() {

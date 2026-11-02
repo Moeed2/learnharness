@@ -30,7 +30,10 @@ class NodeService : Service() {
         if (bootstrapStarted.compareAndSet(false, true)) {
             Thread({ bootstrap() }, "lh-bootstrap").start()
         }
-        return START_NOT_STICKY
+        // Sticky: if Android kills the process while the user signs in or studies in
+        // another app, the server is recreated (intent == null is fine) before the
+        // user returns. MainActivity.restartProcess() calls stopService first.
+        return START_STICKY
     }
 
     private fun promoteToForeground() {
@@ -65,6 +68,7 @@ class NodeService : Service() {
 
             val dataDir = File(filesDir, "data").apply { mkdirs() }
             val homeDir = File(filesDir, "home").apply { mkdirs() }
+            LhSession.cleanStaleTemp(filesDir) // leftovers of a killed server (step 3)
             val port = freeLoopbackPort()
             // Step 5: render service (demo verification) must be up before Node starts.
             val (renderUrl, renderToken) = RenderService.start(this)
