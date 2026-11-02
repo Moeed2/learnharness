@@ -1,0 +1,19 @@
+name = "learnharness-google-drive-relay"
+main = "worker.mjs"
+compatibility_date = "2026-11-01"
+workers_dev = true
+
+# Disable Worker invocation logs: callback URLs contain authorization codes.
+[observability]
+enabled = false
+
+[vars]
+RELAY_URL = "https://learnharness-google-drive-relay.YOUR-SUBDOMAIN.workers.dev"
+GOOGLE_CLIENT_ID = "REPLACE_WITH_WEB_CLIENT_ID.apps.googleusercontent.com"
+
+[[kv_namespaces]]
+binding = "AUTH_CODES"
+id = "REPLACE_WITH_KV_NAMESPACE_ID"
+
+# Set GOOGLE_CLIENT_SECRET and STATE_SECRET through `wrangler secret put`.
+# Never put secrets in vars, the application .env, source control, or an APK.

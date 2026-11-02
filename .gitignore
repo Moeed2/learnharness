@@ -31,3 +31,6 @@ android/libnode/
 android/.payload-staging/
 android/app/src/main/assets/server.zip
 *.apk
+# Local Google OAuth relay secrets and deployment caches
+cloud/google-drive-relay/.dev.vars*
+cloud/google-drive-relay/.wrangler/

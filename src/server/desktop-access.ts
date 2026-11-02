@@ -45,3 +45,11 @@ export function desktopAPIAuthorized(
 	if (!supplied) return false;
 	return safeEqual(supplied, expected);
 }
+
+/** The only /api route reachable without the desktop/Android capability: Google's OAuth loopback
+ * redirect arrives from the system browser, which holds neither the header nor the cookie. The route
+ * itself rejects everything except a request carrying the live single-use state. Exact path, GET only. */
+export const GOOGLE_SYNC_CALLBACK_PATH = "/api/sync/google/callback";
+export function publicOAuthCallback(method: string, pathname: string): boolean {
+	return method === "GET" && pathname === GOOGLE_SYNC_CALLBACK_PATH;
+}
